@@ -1,0 +1,41 @@
+name: remo
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  fl_chart: ^0.66.0
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  sensors_plus: ^6.0.1
+  geolocator: ^14.0.2
+  flutter_native_splash: ^2.4.6
+  flutter_launcher_icons: ^0.14.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter_native_splash:
+  color: "#3F51B5"
+  image: assets/app/splash.png
+  android: true
+  ios: true
+
+flutter_launcher_icons:
+  image_path: "assets/app/icon.png"
+  android: "launcher_icon"
+  ios: true
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/app/icon-android.png"
+
+
+flutter:
+  uses-material-design: true

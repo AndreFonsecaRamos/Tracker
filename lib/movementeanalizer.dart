@@ -1,113 +1,98 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/material.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
-class ImprovedMovementAnalyzer {
-  // Dados do acelerómetro
+class ImprovedMovementAnalyzer extends ChangeNotifier {
   double x = 0, y = 0, z = 0;
-  double magnitude = 0.0;
   bool isWorking = false;
   String errorMessage = "";
   
-  // Contador de remadas otimizado
   int totalStrokes = 0;
   double strokesPerMinute = 0.0;
   double averageStrokeRate = 0.0;
   
-  // Análise temporal
   DateTime? firstStrokeTime;
   DateTime? lastStrokeTime;
   List<DateTime> strokeTimes = [];
   Duration? lastStrokeInterval;
+
+  // LIGA AUTOMATICAMENTE QUANDO A APP ABRE
+  ImprovedMovementAnalyzer() {
+    startAnalysis();
+  }
   
-  // Configurações de detecção melhoradas
-  static const double _movementThreshold = 18.0;
-  static const double _stabilityThreshold = 10.0;
-  static const int _minStrokeInterval = 400; // 400ms mínimo entre remadas
-  static const int _maxStrokeInterval = 4000; // 4s máximo
-  static const int _historySize = 20;
+  static const double _alphaFast = 0.15; 
+  double _smoothMagnitude = 9.8; 
   
-  // Estado interno
-  bool _wasInStroke = false;
-  DateTime? _lastStrokeDetected;
-  List<double> _magnitudeHistory = [];
-  static const int _magnitudeHistorySize = 8;
+  static const double _alphaSlow = 0.01; 
+  double _gravity = 9.8; 
   
-  // Subscription
+  double _dynamicAcceleration = 0.0;
+  bool _isRecoveryPhase = true; 
+  
+  // LIMITES AJUSTADOS PARA A ÁGUA E PESO DO BARCO
+  static const double _driveThreshold = 0.4;    // Muito mais sensível
+  static const double _recoveryThreshold = 0.0; // Perda de tração
+  
+  static const int _minStrokeInterval = 800; 
+  static const int _maxStrokeInterval = 4000; 
+  
   StreamSubscription<AccelerometerEvent>? _subscription;
-  Function? _onStrokeDetected; // Callback para notificar remada
   
   void startAnalysis({Function? onStrokeDetected}) {
-    _onStrokeDetected = onStrokeDetected;
-    
     _subscription = accelerometerEvents.listen(
       _processAccelerometerData,
       onError: (error) {
         errorMessage = "Erro no acelerómetro: $error";
         isWorking = false;
+        notifyListeners();
       },
     );
     
-    // Verificar disponibilidade
     Timer(const Duration(seconds: 3), () {
       if (!isWorking) {
-        errorMessage = "Acelerómetro não disponível";
+        errorMessage = "Acelerómetro não detetado.";
+        notifyListeners();
       }
     });
   }
   
   void _processAccelerometerData(AccelerometerEvent event) {
-    x = event.x;
-    y = event.y;
-    z = event.z;
     isWorking = true;
     errorMessage = "";
     
-    _updateMagnitude();
-    _detectStroke();
-  }
-  
-  void _updateMagnitude() {
+    x = event.x;
+    y = event.y;
+    z = event.z;
+    
     final rawMagnitude = math.sqrt(x * x + y * y + z * z);
+    _smoothMagnitude = _smoothMagnitude + _alphaFast * (rawMagnitude - _smoothMagnitude);
+    _gravity = _gravity + _alphaSlow * (_smoothMagnitude - _gravity);
+    _dynamicAcceleration = _smoothMagnitude - _gravity;
     
-    _magnitudeHistory.add(rawMagnitude);
-    if (_magnitudeHistory.length > _magnitudeHistorySize) {
-      _magnitudeHistory.removeAt(0);
-    }
-    
-    // Magnitude suavizada
-    if (_magnitudeHistory.isNotEmpty) {
-      magnitude = _magnitudeHistory.reduce((a, b) => a + b) / _magnitudeHistory.length;
-    }
+    _detectStroke();
   }
   
   void _detectStroke() {
     final now = DateTime.now();
     
-    // Detectar pico de movimento
-    if (magnitude > _movementThreshold && !_wasInStroke) {
-      if (_lastStrokeDetected == null || 
-          now.difference(_lastStrokeDetected!).inMilliseconds > _minStrokeInterval) {
-        
+    if (_dynamicAcceleration > _driveThreshold && _isRecoveryPhase) {
+      if (lastStrokeTime == null || now.difference(lastStrokeTime!).inMilliseconds > _minStrokeInterval) {
         _registerStroke(now);
-        _wasInStroke = true;
-        
-        // Notificar callback se existir
-        _onStrokeDetected?.call();
+        _isRecoveryPhase = false;
+        notifyListeners(); 
       }
     }
-    else if (magnitude < _stabilityThreshold && _wasInStroke) {
-      _wasInStroke = false;
+    else if (_dynamicAcceleration < _recoveryThreshold && !_isRecoveryPhase) {
+      _isRecoveryPhase = true; 
     }
   }
   
   void _registerStroke(DateTime strokeTime) {
     totalStrokes++;
-    _lastStrokeDetected = strokeTime;
     
-    if (firstStrokeTime == null) {
-      firstStrokeTime = strokeTime;
-    }
+    if (firstStrokeTime == null) firstStrokeTime = strokeTime;
     
     if (lastStrokeTime != null) {
       lastStrokeInterval = strokeTime.difference(lastStrokeTime!);
@@ -116,10 +101,7 @@ class ImprovedMovementAnalyzer {
     
     lastStrokeTime = strokeTime;
     strokeTimes.add(strokeTime);
-    
-    if (strokeTimes.length > _historySize) {
-      strokeTimes.removeAt(0);
-    }
+    if (strokeTimes.length > 10) strokeTimes.removeAt(0);
   }
   
   void _calculateStrokeRates() {
@@ -127,44 +109,41 @@ class ImprovedMovementAnalyzer {
     
     final intervalSeconds = lastStrokeInterval!.inMilliseconds / 1000.0;
     
-    if (intervalSeconds >= _minStrokeInterval / 1000.0 && 
-        intervalSeconds <= _maxStrokeInterval / 1000.0) {
-      
-      // Taxa instantânea
+    if (intervalSeconds >= _minStrokeInterval / 1000.0 && intervalSeconds <= _maxStrokeInterval / 1000.0) {
       strokesPerMinute = 60.0 / intervalSeconds;
-      strokesPerMinute = math.min(math.max(strokesPerMinute, 8.0), 50.0);
-      
-      // Taxa média das últimas 10 remadas
-      if (strokeTimes.length >= 10) {
-        final recent = strokeTimes.sublist(strokeTimes.length - 10);
-        final totalTime = recent.last.difference(recent.first).inMilliseconds / 1000.0;
-        if (totalTime > 0) {
-          averageStrokeRate = (recent.length - 1) * 60.0 / totalTime;
-          averageStrokeRate = math.min(math.max(averageStrokeRate, 8.0), 50.0);
-        }
+      if (strokeTimes.length >= 2) {
+        final totalTime = strokeTimes.last.difference(strokeTimes.first).inMilliseconds / 1000.0;
+        averageStrokeRate = (strokeTimes.length - 1) * 60.0 / totalTime;
       }
+    } else if (intervalSeconds > _maxStrokeInterval / 1000.0) {
+      strokesPerMinute = 0.0;
     }
   }
   
   String getSessionDurationString() {
-    if (firstStrokeTime == null) return "0s";
+    if (firstStrokeTime == null) return "00:00";
+    final now = DateTime.now();
+    final end = (lastStrokeTime != null && now.difference(lastStrokeTime!).inSeconds > 5) 
+        ? lastStrokeTime! 
+        : now;
+    final elapsed = end.difference(firstStrokeTime!);
     
-    final now = lastStrokeTime ?? DateTime.now();
-    final elapsed = now.difference(firstStrokeTime!);
-    
-    if (elapsed.inMinutes > 0) {
-      return "${elapsed.inMinutes}m ${elapsed.inSeconds % 60}s";
-    }
-    return "${elapsed.inSeconds}s";
+    final m = elapsed.inMinutes.toString().padLeft(2, '0');
+    final s = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
+    return "$m:$s";
   }
   
   String getMovementStatus() {
-    if (!isWorking) return "Sensor indisponível";
-    if (_wasInStroke) return "Remando";
-    if (magnitude > _stabilityThreshold) return "Em movimento";
-    return "Barco parado - Pronto!";
+    if (!isWorking) return "A aguardar sensor...";
+    final now = DateTime.now();
+    if (lastStrokeTime != null && now.difference(lastStrokeTime!).inSeconds > 4) {
+      return "Barco Parado";
+    }
+    return !_isRecoveryPhase ? "Puxada (Drive)" : "Deslize (Recovery)";
   }
   
+  double get magnitude => _dynamicAcceleration; 
+
   void reset() {
     totalStrokes = 0;
     strokesPerMinute = 0.0;
@@ -173,9 +152,11 @@ class ImprovedMovementAnalyzer {
     lastStrokeTime = null;
     lastStrokeInterval = null;
     strokeTimes.clear();
-    _lastStrokeDetected = null;
-    _wasInStroke = false;
-    _magnitudeHistory.clear();
+    _isRecoveryPhase = true;
+    _smoothMagnitude = 9.8;
+    _gravity = 9.8;
+    _dynamicAcceleration = 0.0;
+    notifyListeners();
   }
   
   void stopAnalysis() {
@@ -183,7 +164,9 @@ class ImprovedMovementAnalyzer {
     _subscription = null;
   }
   
+  @override
   void dispose() {
     stopAnalysis();
+    super.dispose();
   }
 }

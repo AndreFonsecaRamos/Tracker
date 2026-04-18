@@ -1,6 +1,7 @@
 # remo
 
-A new Flutter project.
+Projeto de remo em flutter.
+O objetivo desta aplicação é criar um tracker para remo utilizavel atravez do telemovel.
 
 ## Getting Started
 

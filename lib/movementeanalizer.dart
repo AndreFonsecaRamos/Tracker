@@ -17,7 +17,9 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   List<DateTime> strokeTimes = [];
   Duration? lastStrokeInterval;
 
-  // LIGA AUTOMATICAMENTE QUANDO A APP ABRE
+  // NOVO: O CADEADO DE GRAVAÇÃO
+  bool isRecording = false; 
+
   ImprovedMovementAnalyzer() {
     startAnalysis();
   }
@@ -31,9 +33,8 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   double _dynamicAcceleration = 0.0;
   bool _isRecoveryPhase = true; 
   
-  // LIMITES AJUSTADOS PARA A ÁGUA E PESO DO BARCO
-  static const double _driveThreshold = 0.4;    // Muito mais sensível
-  static const double _recoveryThreshold = 0.0; // Perda de tração
+  static const double _driveThreshold = 0.4;    
+  static const double _recoveryThreshold = 0.0; 
   
   static const int _minStrokeInterval = 800; 
   static const int _maxStrokeInterval = 4000; 
@@ -57,6 +58,17 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
       }
     });
   }
+
+  // NOVOS MÉTODOS DE CONTROLO
+  void startRecording() {
+    isRecording = true;
+  }
+
+  void stopRecording() {
+    isRecording = false;
+    strokesPerMinute = 0.0; // Coloca a voga a 0 visualmente quando pausas
+    notifyListeners();
+  }
   
   void _processAccelerometerData(AccelerometerEvent event) {
     isWorking = true;
@@ -79,7 +91,12 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     
     if (_dynamicAcceleration > _driveThreshold && _isRecoveryPhase) {
       if (lastStrokeTime == null || now.difference(lastStrokeTime!).inMilliseconds > _minStrokeInterval) {
-        _registerStroke(now);
+        
+        // CADEADO EM AÇÃO: Só regista se o utilizador já deu o Start!
+        if (isRecording) {
+          _registerStroke(now);
+        }
+        
         _isRecoveryPhase = false;
         notifyListeners(); 
       }
@@ -145,6 +162,7 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   double get magnitude => _dynamicAcceleration; 
 
   void reset() {
+    isRecording = false; // Garante que tranca ao fazer reset
     totalStrokes = 0;
     strokesPerMinute = 0.0;
     averageStrokeRate = 0.0;

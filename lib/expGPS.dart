@@ -1,6 +1,27 @@
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
+import 'movementeanalizer.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+// 1. CLASSE DE DADOS (Átomo)
+class Pontodetreino {
+  final DateTime tempo;
+  final double lat;
+  final double long;
+  final double velocidade;
+  final int cadencia;
+
+  Pontodetreino({
+    required this.tempo,
+    required this.lat,
+    required this.long,
+    required this.velocidade,
+    required this.cadencia,
+  });
+}
 
 class GPSController extends ChangeNotifier {
   double lat = 0.0;
@@ -20,18 +41,20 @@ class GPSController extends ChangeNotifier {
   static const double _distanciaMinima = 0.5; 
   static const double _velocidadeMaxima = 12.0; 
 
-  // MÉDIA MÓVEL DE 10 SEGUNDOS (Estabilidade PM5)
   final List<double> _historicoVelocidades = [];
   static const int _tamanhoMediaMovel = 10; 
 
-  void iniciarTracking() {
+  // A LISTA PARA O STRAVA
+  List<Pontodetreino> sessaoAtual = [];
+
+  // 2. MÉTODO PARA LIGAR O TRACKING (Recebe o analyzer para saber a voga)
+  void iniciarTracking(ImprovedMovementAnalyzer analyzer) {
     const settings = LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 0, // Atualiza todos os segundos sem hesitar
+      distanceFilter: 0,
     );
 
-    _posicaoSubscription =
-        Geolocator.getPositionStream(locationSettings: settings).listen(
+    _posicaoSubscription = Geolocator.getPositionStream(locationSettings: settings).listen(
       (pos) {
         if (pos.accuracy > _precisaoMinima) return;
 
@@ -39,7 +62,8 @@ class GPSController extends ChangeNotifier {
         long = pos.longitude;
 
         if (ultimaPosicao != null) {
-          _calcularMovimento(pos);
+          // Chamamos o cálculo passando a voga e se está a gravar
+          _processarPonto(pos, analyzer.strokesPerMinute.round(), analyzer.isRecording);
         }
 
         ultimaPosicao = pos;
@@ -53,7 +77,8 @@ class GPSController extends ChangeNotifier {
     );
   }
 
-  void _calcularMovimento(Position novaPosicao) {
+  // 3. MÉTODO DE CÁLCULO E REGISTO (Um único nome, sem duplicados)
+  void _processarPonto(Position novaPosicao, int voga, bool gravando) {
     final distancia = Geolocator.distanceBetween(
       ultimaPosicao!.latitude,
       ultimaPosicao!.longitude,
@@ -67,35 +92,42 @@ class GPSController extends ChangeNotifier {
 
     if (tempoDecorrido <= 0) return;
 
-    // VELOCIDADE DOPPLER DIRETA DO CHIP
     double velocidadeInstantanea = novaPosicao.speed;
-
     if (velocidadeInstantanea <= 0 && distancia > _distanciaMinima) {
       velocidadeInstantanea = distancia / tempoDecorrido;
     }
 
     if (velocidadeInstantanea > _velocidadeMaxima) return; 
 
-    if (distancia < _distanciaMinima && velocidadeInstantanea < 0.5) {
-      _atualizarVelocidadeMedia(0.0);
-      return;
-    }
-
-    if (distancia < 20.0) { 
+    // Atualiza acumulados
+    if (distancia > _distanciaMinima && distancia < 20.0) { 
       distanciaTotal += distancia;
       distanciaUltimaRemada = distancia;
     }
+
+    // REGISTO PARA O STRAVA (Cadeado de gravação)
+    if (gravando) {
+      sessaoAtual.add(
+        Pontodetreino(
+          tempo: DateTime.now(),
+          lat: novaPosicao.latitude,
+          long: novaPosicao.longitude,
+          velocidade: velocidadeInstantanea,
+          cadencia: voga,
+        ),
+      );
+    }
+
+    print("Ponto gravado! Total na lista: ${sessaoAtual.length} | Voga: $voga");
 
     _atualizarVelocidadeMedia(velocidadeInstantanea);
   }
 
   void _atualizarVelocidadeMedia(double novaVelocidade) {
     _historicoVelocidades.add(novaVelocidade);
-    
     if (_historicoVelocidades.length > _tamanhoMediaMovel) {
       _historicoVelocidades.removeAt(0);
     }
-
     velocidadeAtual = _historicoVelocidades.reduce((a, b) => a + b) / _historicoVelocidades.length;
 
     if (velocidadeAtual > 0.5) { 
@@ -105,6 +137,7 @@ class GPSController extends ChangeNotifier {
     }
   }
 
+  // MÉTODOS DE UTILIDADE
   String getParcialFormatado() {
     if (parcialPor500m <= 0 || parcialPor500m > 3600) return "--:--";
     final minutos = (parcialPor500m / 60).floor();
@@ -116,20 +149,16 @@ class GPSController extends ChangeNotifier {
     if (ultimaPosicao == null) return "A procurar...";
     final precisao = ultimaPosicao!.accuracy;
     if (precisao <= 4) return "Excelente (${precisao.toStringAsFixed(1)}m)";
-    if (precisao <= 8) return "Muito bom (${precisao.toStringAsFixed(1)}m)";
     if (precisao <= 15) return "Bom (${precisao.toStringAsFixed(1)}m)";
     return "Fraco (${precisao.toStringAsFixed(1)}m)";
   }
 
-  double getVelocidadeKmh() {
-    return velocidadeAtual * 3.6;
-  }
+  double getVelocidadeKmh() => velocidadeAtual * 3.6;
 
   Future<void> pararTracking() async {
     await _posicaoSubscription?.cancel();
     _posicaoSubscription = null;
     ultimaPosicao = null;
-    _ultimoUpdate = null;
     _historicoVelocidades.clear();
   }
   
@@ -139,37 +168,86 @@ class GPSController extends ChangeNotifier {
     velocidadeAtual = 0.0;
     parcialPor500m = 0.0;
     _historicoVelocidades.clear();
+    sessaoAtual.clear(); // Limpa a lista do Strava
     notifyListeners();
   }
 
   Future<Position> getPermissao() async {
+    bool ativado = await Geolocator.isLocationServiceEnabled();
+    if (!ativado) throw Exception('Localização desligada.');
+
+    LocationPermission permissao = await Geolocator.checkPermission();
+    if (permissao == LocationPermission.denied) {
+      permissao = await Geolocator.requestPermission();
+      if (permissao == LocationPermission.denied) throw Exception('Permissão negada.');
+    }
+    return await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.bestForNavigation);
+  }
+
+  // --- FUNÇÃO PARA EXPORTAR PARA STRAVA (TCX) ---
+  Future<void> exportarTreinoTCX() async {
+    if (sessaoAtual.isEmpty) {
+      erro = "Não há dados para exportar.";
+      notifyListeners();
+      return;
+    }
+
     try {
-      LocationPermission permissao;
+      // 1. Criar o cabeçalho do ficheiro XML (Formato Garmin TCX)
+      String tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Rowing">
+      <Id>${sessaoAtual.first.tempo.toUtc().toIso8601String()}</Id>
+      <Lap StartTime="${sessaoAtual.first.tempo.toUtc().toIso8601String()}">
+        <TotalTimeSeconds>${sessaoAtual.last.tempo.difference(sessaoAtual.first.tempo).inSeconds}</TotalTimeSeconds>
+        <DistanceMeters>$distanciaTotal</DistanceMeters>
+        <Intensity>Active</Intensity>
+        <TriggerMethod>Manual</TriggerMethod>
+        <Track>''';
 
-      bool ativado = await Geolocator.isLocationServiceEnabled();
-      if (!ativado) throw Exception('Localização desligada.');
-
-      permissao = await Geolocator.checkPermission();
-      if (permissao == LocationPermission.denied) {
-        permissao = await Geolocator.requestPermission();
-        if (permissao == LocationPermission.denied) throw Exception('Permissão negada.');
+      // 2. Injetar todos os pontos gravados
+      for (var ponto in sessaoAtual) {
+        tcx += '''
+          <Trackpoint>
+            <Time>${ponto.tempo.toUtc().toIso8601String()}</Time>
+            <Position>
+              <LatitudeDegrees>${ponto.lat}</LatitudeDegrees>
+              <LongitudeDegrees>${ponto.long}</LongitudeDegrees>
+            </Position>
+            <Cadence>${ponto.cadencia}</Cadence>
+            <Extensions>
+              <TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">
+                <Speed>${ponto.velocidade}</Speed>
+              </TPX>
+            </Extensions>
+          </Trackpoint>''';
       }
 
-      if (permissao == LocationPermission.deniedForever) {
-        throw Exception('Permissão permanentemente negada.');
-      }
+      // 3. Fechar o ficheiro XML
+      tcx += '''
+        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
 
-      final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.bestForNavigation,
-      );
-      lat = pos.latitude;
-      long = pos.longitude;
-      notifyListeners();
-      return pos;
+      // 4. Encontrar uma pasta temporária no telemóvel para guardar o ficheiro
+      final directory = await getTemporaryDirectory();
+      
+      // Nome do ficheiro com a data atual (ex: Treino_Rowing_20240510_1530.tcx)
+      final dataStr = DateTime.now().toIso8601String().replaceAll(':', '').split('.').first;
+      final file = File('${directory.path}/Treino_Rowing_$dataStr.tcx');
+      
+      // Escrever o texto para o ficheiro físico
+      await file.writeAsString(tcx);
+
+      // 5. Abrir a janela de Partilha do Android/iOS!
+      await Share.shareXFiles([XFile(file.path)], text: 'O meu treino de Remo!');
+      
     } catch (e) {
-      erro = e.toString();
+      erro = "Erro ao exportar: $e";
       notifyListeners();
-      rethrow;
     }
   }
 }

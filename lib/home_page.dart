@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:async';
 import 'segunda_pagina.dart';
 import 'pagina_metros.dart';
 import 'just_row.dart';
-import 'expGPS.dart';
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
@@ -15,315 +13,223 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final gps = GPSController();
-
-  @override
-  void initState() {
-    super.initState();
-    _pedirPermissao();
-  }
-
-  Future<void> _pedirPermissao() async {
-    try {
-      final posicao = await gps.getPermissao();
-      print("Lat: ${posicao.latitude}, Long: ${posicao.longitude}");
-    } catch (e) {
-      print("Erro: $e");
-    }
-  }
-
-  final _formKey = GlobalKey<FormState>();
-  Duration? _tempo;
-  double? _metros;
-  Duration? _intervalo;
-
-  // Controladores para poder limpar os campos
-  final _metrosController = TextEditingController();
-  final _tempoController = GlobalKey<_DurationFormFieldState>();
-  final _intervaloController = GlobalKey<_DurationFormFieldState>();
-
-  void _limparCampos() {
-    setState(() {
-      _tempo = null;
-      _metros = null;
-      _intervalo = null;
-    });
-    _metrosController.clear();
-    _tempoController.currentState?.clear();
-    _intervaloController.currentState?.clear();
-  }
-
-  @override
-  void dispose() {
-    _metrosController.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(widget.title),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
-              // Tempo
-              DurationFormField(
-                key: _tempoController,
-                label: 'Tempo',
-                onSaved: (d) => _tempo = d,
-              ),
-              const SizedBox(height: 20),
-
-              // Metros
-              TextFormField(
-                controller: _metrosController,
-                decoration: const InputDecoration(
-                  labelText: 'Distância (m)',
-                  helperText: 'Deixar vazio se usar modo tempo',
-                ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onSaved: (String? value) {
-                  if (value != null && value.isNotEmpty) {
-                    _metros = double.tryParse(value);
-                  } else {
-                    _metros = null; // Importante: definir como null se vazio
-                  }
-                },
-                validator: (String? value) {
-                  if (value != null && value.isNotEmpty) {
-                    final metros = double.tryParse(value);
-                    if (metros == null || metros <= 0) {
-                      return 'Valor inválido';
-                    }
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 20),
-
-              // Intervalo
-              DurationFormField(
-                key: _intervaloController,
-                label: 'Intervalo (opcional)',
-                onSaved: (d) => _intervalo = d,
-              ),
-              const SizedBox(height: 20),
-
-              // Botão para limpar campos
-              OutlinedButton.icon(
-                onPressed: _limparCampos,
-                icon: const Icon(Icons.clear_all),
-                label: const Text('Limpar Campos'),
-              ),
-              const SizedBox(height: 10),
-
-              FilledButton(
-                onPressed: () {
-                  final ok = _formKey.currentState!.validate();
-                  if (!ok) return;
-
-                  _formKey.currentState!.save();
-
-                  final temTempo = _tempo != null && _tempo!.inSeconds > 0;
-                  final temMetros = _metros != null && _metros! > 0;
-
-                  print("Debug - Tempo: $_tempo, Metros: $_metros");
-                  print("Debug - temTempo: $temTempo, temMetros: $temMetros");
-
-                  if (!temTempo && !temMetros) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Indica tempo OU distância')),
-                    );
-                    return;
-                  }
-                  if (temTempo && temMetros) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Escolhe só uma opção: tempo OU distância')),
-                    );
-                    return;
-                  }
-
-                  if (temTempo) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => SegundaPagina(
-                          tempo: _tempo!,
-                          intervalo: _intervalo ?? Duration.zero,
-                        ),
-                      ),
-                    );
-                  } else if (temMetros) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => PaginaMetros(
-                          metros: _metros!,
-                          intervalo: _intervalo ?? Duration.zero,
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: const Text('Start')
-              ),
-
-              const SizedBox(height: 10),
-
-              FilledButton(
-                onPressed: (){
-                  Navigator.push(context,
-                  MaterialPageRoute(builder:(context) => JustRow())
-                  );
-                },
-                child: const Text('Just Row'),
-              )
+    return DefaultTabController(
+      length: 3, // As 3 abas: Just Row, Tempo, Distância
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+          title: Text(widget.title),
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.rowing), text: "Just Row"),
+              Tab(icon: Icon(Icons.timer), text: "Tempo"),
+              Tab(icon: Icon(Icons.straighten), text: "Distância"),
             ],
           ),
+        ),
+        body: const TabBarView(
+          children: [
+            JustRowMenu(),
+            IntervaloTempoMenu(),
+            IntervaloDistanciaMenu(),
+          ],
         ),
       ),
     );
   }
 }
 
-/// Campo composto (Min + Seg) que valida e devolve um Duration
+// --- ABA 1: JUST ROW ---
+class JustRowMenu extends StatelessWidget {
+  const JustRowMenu({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.play_circle_outline, size: 100, color: Colors.green),
+          const SizedBox(height: 20),
+          const Text(
+            "MODO LIVRE",
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          ),
+          const Padding(
+            padding: EdgeInsets.all(20.0),
+            child: Text("Rema sem limites de tempo ou distância.", textAlign: TextAlign.center),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (context) => const JustRow()));
+            },
+            icon: const Icon(Icons.arrow_forward),
+            label: const Text("START JUST ROW", style: TextStyle(fontSize: 18)),
+            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- ABA 2: INTERVALOS TEMPO (CORRIGIDA COM SCROLL) ---
+class IntervaloTempoMenu extends StatefulWidget {
+  const IntervaloTempoMenu({super.key});
+
+  @override
+  State<IntervaloTempoMenu> createState() => _IntervaloTempoMenuState();
+}
+
+class _IntervaloTempoMenuState extends State<IntervaloTempoMenu> {
+  Duration _tempoSerie = Duration.zero;
+  Duration _tempoIntervalo = Duration.zero;
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. SingleChildScrollView é a MAGIA aqui. Permite fazer scroll quando o teclado sobe.
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            const Text("CONFIGURAR INTERVALOS DE TEMPO", style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 30),
+            DurationFormField(
+              label: "Tempo de Série (Trabalho)",
+              onChanged: (d) => _tempoSerie = d ?? Duration.zero,
+            ),
+            const SizedBox(height: 20),
+            DurationFormField(
+              label: "Tempo de Descanso (Intervalo)",
+              onChanged: (d) => _tempoIntervalo = d ?? Duration.zero,
+            ),
+            // 2. Trocámos o Spacer() por um SizedBox fixo, porque dentro de um scroll
+            // o Spacer() não funciona (o scroll não tem altura definida).
+            const SizedBox(height: 40), 
+            FilledButton(
+              onPressed: () {
+                if (_tempoSerie.inSeconds > 0) {
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => SegundaPagina(
+                    tempo: _tempoSerie,
+                    intervalo: _tempoIntervalo,
+                  )));
+                }
+              },
+              child: const Text("COMEÇAR SÉRIES DE TEMPO"),
+            ),
+            const SizedBox(height: 30),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- ABA 3: INTERVALOS DISTÂNCIA (CORRIGIDA COM SCROLL) ---
+class IntervaloDistanciaMenu extends StatefulWidget {
+  const IntervaloDistanciaMenu({super.key});
+
+  @override
+  State<IntervaloDistanciaMenu> createState() => _IntervaloDistanciaMenuState();
+}
+
+class _IntervaloDistanciaMenuState extends State<IntervaloDistanciaMenu> {
+  final _distanciaController = TextEditingController();
+  Duration _tempoIntervalo = Duration.zero;
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. SingleChildScrollView adicionado aqui também.
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            const Text("CONFIGURAR INTERVALOS DE DISTÂNCIA", style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 30),
+            TextField(
+              controller: _distanciaController,
+              decoration: const InputDecoration(labelText: "Distância do Puxão (metros)", border: OutlineInputBorder()),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            ),
+            const SizedBox(height: 20),
+            DurationFormField(
+              label: "Tempo de Descanso (Intervalo)",
+              onChanged: (d) => _tempoIntervalo = d ?? Duration.zero,
+            ),
+            // 2. Trocámos o Spacer() por um SizedBox fixo.
+            const SizedBox(height: 40), 
+            FilledButton(
+              onPressed: () {
+                double? m = double.tryParse(_distanciaController.text);
+                if (m != null && m > 0) {
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => PaginaMetros(
+                    metros: m,
+                    intervalo: _tempoIntervalo,
+                  )));
+                }
+              },
+              child: const Text("COMEÇAR SÉRIES DE METROS"),
+            ),
+            const SizedBox(height: 30),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- WIDGET AUXILIAR: DurationFormField ---
 class DurationFormField extends StatefulWidget {
   final String label;
-  final AutovalidateMode autovalidateMode;
-  final void Function(Duration?)? onSaved;
-  final void Function(Duration?)? onChanged;
+  final Function(Duration?) onChanged;
 
-  const DurationFormField({
-    super.key,
-    required this.label,
-    this.autovalidateMode = AutovalidateMode.onUserInteraction,
-    this.onSaved,
-    this.onChanged,
-  });
+  const DurationFormField({super.key, required this.label, required this.onChanged});
 
   @override
   State<DurationFormField> createState() => _DurationFormFieldState();
 }
 
 class _DurationFormFieldState extends State<DurationFormField> {
-  final _minCtrl = TextEditingController();
-  final _secCtrl = TextEditingController();
+  final _min = TextEditingController();
+  final _sec = TextEditingController();
 
-  // Método para limpar os campos
-  void clear() {
-    _minCtrl.clear();
-    _secCtrl.clear();
+  void _update() {
+    final m = int.tryParse(_min.text) ?? 0;
+    final s = int.tryParse(_sec.text) ?? 0;
+    widget.onChanged(Duration(minutes: m, seconds: s));
   }
 
-  @override
-  void dispose() {
-    _minCtrl.dispose();
-    _secCtrl.dispose();
-    super.dispose();
-  }
-
-  Duration _parse() {
-    final m = int.tryParse(_minCtrl.text) ?? 0;
-    final s = int.tryParse(_secCtrl.text) ?? 0;
-    return Duration(minutes: m, seconds: s);
-  }
-  
-  String? _validate({bool required = true}) {
-    // Se não for obrigatório e o campo está vazio, retorna null
-    if (!required && _minCtrl.text.isEmpty && _secCtrl.text.isEmpty) {
-      return null;
-    }
-
-    if ((_minCtrl.text.isEmpty) && (_secCtrl.text.isEmpty)) {
-      return null; // Permitir campos vazios
-    }
-    final sec = int.tryParse(_secCtrl.text.isEmpty ? '0' : _secCtrl.text);
-    if (sec == null) return 'Segundos inválidos';
-    if (sec < 0 || sec > 59) return 'Segundos de 0 a 59';
-
-    final min = int.tryParse(_minCtrl.text.isEmpty ? '0' : _minCtrl.text);
-    if (min == null || min < 0) return 'Minutos inválidos';
-
-    return null;
-  }
-  
   @override
   Widget build(BuildContext context) {
-    return FormField<Duration>(
-      autovalidateMode: widget.autovalidateMode,
-      validator: (_) => _validate(required: false),
-      onSaved: (_) {
-        final duration = _parse();
-        // Só salvar se tiver valor maior que 0
-        widget.onSaved?.call(duration.inSeconds > 0 ? duration : null);
-      },
-      builder: (state) {
-        void handleChange(String _) {
-          final dur = _parse();
-          state.didChange(dur);
-          widget.onChanged?.call(dur.inSeconds > 0 ? dur : null);
-          setState(() {});
-        }
-
-        final error = state.errorText;
-
-        InputDecoration deco(String label) => InputDecoration(
-              labelText: label,
-              counterText: '',
-              errorText: null,
-            );
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(widget.label, style: const TextStyle(fontSize: 14, color: Colors.grey)),
+        const SizedBox(height: 8),
+        Row(
           children: [
-            Text(widget.label, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Flexible(
-                  child: TextField(
-                    controller: _minCtrl,
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                    maxLength: 3,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: deco('Min'),
-                    onChanged: handleChange,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Flexible(
-                  child: TextField(
-                    controller: _secCtrl,
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.done,
-                    maxLength: 2,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: deco('Seg'),
-                    onChanged: handleChange,
-                  ),
-                ),
-              ],
-            ),
-            if (error != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                error,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                ),
-              ),
-            ],
+            Expanded(child: TextField(
+              controller: _min, 
+              decoration: const InputDecoration(labelText: "Min", border: OutlineInputBorder()), 
+              keyboardType: TextInputType.number, 
+              onChanged: (_) => _update()
+            )),
+            const SizedBox(width: 10),
+            Expanded(child: TextField(
+              controller: _sec, 
+              decoration: const InputDecoration(labelText: "Seg", border: OutlineInputBorder()), 
+              keyboardType: TextInputType.number, 
+              onChanged: (_) => _update()
+            )),
           ],
-        );
-      },
+        ),
+      ],
     );
   }
 }

@@ -24,7 +24,9 @@ class PaginaMetros extends StatefulWidget {
 class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver {
   int comeco = 3;
   Timer? _timer;
-  bool _concluido = false;
+  
+  bool _isDescanso = false;
+  Duration _tempoRestanteDescanso = Duration.zero;
 
   DateTime? _horaQueComecou;
   Duration _tempoAcumuladoAntesDaPausa = Duration.zero;
@@ -35,6 +37,13 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this); 
     WakelockPlus.enable(); 
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<GPSController>().resetDados();
+        context.read<ImprovedMovementAnalyzer>().reset();
+      }
+    });
   }
 
   @override
@@ -49,43 +58,13 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
     }
   }
 
-  void _showCompletionDialog(ImprovedMovementAnalyzer analyzer, String tempoFinal) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('🏆 Distância Completada!'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Distância: ${widget.metros.toStringAsFixed(0)}m'),
-              Text('Remadas: ${analyzer.totalStrokes}'),
-              Text('Taxa média: ${analyzer.averageStrokeRate.toStringAsFixed(1)} spm'),
-              Text('Tempo: $tempoFinal'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _resetCounters();
-              },
-              child: const Text('Novo Treino'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   void _resetCounters() {
     _stopTimer();
     context.read<GPSController>().resetDados();
     context.read<ImprovedMovementAnalyzer>().reset();
 
     setState(() {
-      _concluido = false;
+      _isDescanso = false;
       _horaQueComecou = null;
       _tempoAcumuladoAntesDaPausa = Duration.zero;
       _tempoAtual = Duration.zero;
@@ -93,10 +72,12 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
     });
   }
 
+  // --- GATILHO AUTOMÁTICO: DISTÂNCIA ---
   void _startTimer() {
     if (_timer != null && _timer!.isActive) return;
 
     _horaQueComecou = DateTime.now();
+    context.read<ImprovedMovementAnalyzer>().startRecording();
 
     _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
       if (!mounted) {
@@ -105,20 +86,41 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
       }
       
       final currentGps = context.read<GPSController>();
-      
-      setState(() {
-        _tempoAtual = _tempoAcumuladoAntesDaPausa + DateTime.now().difference(_horaQueComecou!);
-      });
+      final agora = DateTime.now();
 
-      if (currentGps.distanciaTotal >= widget.metros && !_concluido) {
-         _concluido = true;
-         _stopTimer();
-         
-         final minutos = _tempoAtual.inMinutes;
-         final segundos = _tempoAtual.inSeconds % 60;
-         final tempoFinalStr = "${minutos.toString().padLeft(2, '0')}:${segundos.toString().padLeft(2, '0')}";
-         
-         _showCompletionDialog(context.read<ImprovedMovementAnalyzer>(), tempoFinalStr);
+      if (!_isDescanso) {
+        // TRABALHO: Contar o tempo normalmente
+        setState(() {
+          _tempoAtual = _tempoAcumuladoAntesDaPausa + agora.difference(_horaQueComecou!);
+        });
+
+        // GATILHO 1: Atingiu os metros alvo?
+        if (currentGps.distanciaTotal >= widget.metros) {
+           setState(() {
+             _isDescanso = true; 
+             _tempoRestanteDescanso = widget.intervalo; 
+             _horaQueComecou = agora; // Reinicia o relógio interno para o descanso
+             _tempoAcumuladoAntesDaPausa = _tempoAtual; // Guarda o tempo decorrido
+           });
+        }
+      } else {
+        // DESCANSO: Contagem decrescente
+        final tempoPassado = agora.difference(_horaQueComecou!);
+        final tempoAmostrar = _tempoRestanteDescanso - tempoPassado;
+
+        if (tempoAmostrar.inSeconds <= 0) {
+          // GATILHO 2: O descanso terminou
+          setState(() {
+            _isDescanso = false; 
+            _horaQueComecou = agora; // Relógio regressa à contagem de trabalho
+          });
+          
+          currentGps.resetDados(); 
+        } else {
+          setState(() {
+            _tempoAtual = tempoAmostrar;
+          });
+        }
       }
     });
   }
@@ -127,9 +129,11 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
     if (_timer != null && _timer!.isActive) return;
 
     final gps = context.read<GPSController>();
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
+
     try {
       await gps.getPermissao();
-      gps.iniciarTracking();
+      gps.iniciarTracking(analyzer);
 
       if (comeco > 0) {
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -143,6 +147,7 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
           } else {
             timer.cancel();
             setState(() { comeco = 0; });
+            gps.resetDados();
             _startTimer();
           }
         });
@@ -155,12 +160,17 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
   }
 
   void _stopTimer() {
-    if (_horaQueComecou != null) {
-      _tempoAcumuladoAntesDaPausa += DateTime.now().difference(_horaQueComecou!);
-      _horaQueComecou = null; 
-    }
-    _timer?.cancel();
-    _timer = null;
+    // AVISAR O ECRÃ PARA ATUALIZAR (Mostrar o botão)
+    setState(() { 
+      if (_horaQueComecou != null) {
+        _tempoAcumuladoAntesDaPausa += DateTime.now().difference(_horaQueComecou!);
+        _horaQueComecou = null; 
+      }
+      _timer?.cancel();
+      _timer = null;
+    });
+    
+    context.read<ImprovedMovementAnalyzer>().stopRecording();
     context.read<GPSController>().pararTracking();
   }
 
@@ -172,6 +182,45 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
     super.dispose();
   }
 
+  // --- JANELA DE FIM E EXPORTAÇÃO ---
+  void _showCompletionDialog() {
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
+    final gps = context.read<GPSController>();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('🏆 Treino Concluído!'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Distância Alvo: ${widget.metros.toStringAsFixed(0)}m'),
+              Text('Remadas: ${analyzer.totalStrokes}'),
+              Text('Voga média: ${analyzer.averageStrokeRate.toStringAsFixed(1)} spm'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                context.read<GPSController>().exportarTreinoTCX();
+              },
+              child: const Text('Exportar (Strava)', style: TextStyle(color: Colors.orange)),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _resetCounters();
+              },
+              child: const Text('Novo Treino'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final gps = context.watch<GPSController>();
@@ -179,7 +228,6 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
 
     double metrosRestantes = math.max(0, widget.metros - gps.distanciaTotal);
     
-    // FORMATAÇÃO DO TEMPO (Igual ao Just Row)
     final minutos = _tempoAtual.inMinutes;
     final segundos = _tempoAtual.inSeconds % 60;
     final stringTempo = comeco > 0 
@@ -211,39 +259,71 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
         child: ListView(
           children: [
             const SizedBox(height: 10),
-            
-            // Text do Tempo por cima igual ao Just Row
+            // CABEÇALHO DO ESTADO (DESCANSO/TREINO)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: _isDescanso ? Colors.orange.shade100 : Colors.green.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _isDescanso ? "DESCANSO" : "TREINO",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 20, 
+                  fontWeight: FontWeight.bold,
+                  color: _isDescanso ? Colors.orange.shade800 : Colors.green.shade800,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
             Text(
               stringTempo,
               style: TextStyle(
                 fontSize: 64,
                 fontWeight: FontWeight.bold,
-                color: comeco > 0 ? Colors.red : Colors.green,
+                color: comeco > 0 ? Colors.red : (_isDescanso ? Colors.orange : Colors.green),
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
 
-            const Text(
-              "METROS RESTANTES",
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey),
-            ),
-            Text(
-              metrosRestantes.toStringAsFixed(0),
-              style: const TextStyle(
-                fontSize: 72, 
-                fontWeight: FontWeight.bold,
-                color: Colors.orange,
+            if (!_isDescanso) ...[
+              const Text(
+                "METROS RESTANTES",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey),
               ),
-              textAlign: TextAlign.center,
-            ),
+              Text(
+                metrosRestantes.toStringAsFixed(0),
+                style: const TextStyle(
+                  fontSize: 72, 
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
             const SizedBox(height: 20),
             ControlButtons(
               onStart: _startWork,
               onStop: _stopTimer,
               onReset: _resetCounters,
             ),
+            // --- BOTÃO DE FINALIZAÇÃO MANUAL ---
+            if (comeco == 0 && _timer == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilledButton.icon(
+                  onPressed: _showCompletionDialog,
+                  icon: const Icon(Icons.save),
+                  label: const Text("FINALIZAR E EXPORTAR"),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                ),
+              ),
             const SizedBox(height: 20),
             GridView.count(
               shrinkWrap: true,
@@ -265,7 +345,7 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
                 ),
                 StatCard(
                   title: "Tempo",
-                  value: stringTempo, // Agora usa o tempo formatado correto!
+                  value: stringTempo, 
                   baseColor: Colors.purple,
                 ),
                 StatCard(

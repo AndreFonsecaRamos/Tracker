@@ -26,6 +26,13 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable(); 
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<GPSController>().resetDados();
+        context.read<ImprovedMovementAnalyzer>().reset();
+      }
+    });
   }
 
   @override
@@ -41,7 +48,7 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
   }
 
   void _resetCounters() {
-    _stopTimer(); // Garante que o timer para antes de limpar
+    _stopTimer(); 
     context.read<GPSController>().resetDados();
     context.read<ImprovedMovementAnalyzer>().reset();
     
@@ -57,6 +64,8 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
     if (_timer != null && _timer!.isActive) return;
 
     _horaQueComecou = DateTime.now();
+    // ABRIR O CADEADO DO ACELERÓMETRO
+    context.read<ImprovedMovementAnalyzer>().startRecording();
 
     _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
       if (!mounted) {
@@ -70,17 +79,16 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
   }
 
   void _startWork() async {
-    // CORREÇÃO: Impede duplo clique, mas permite Resume!
     if (_timer != null && _timer!.isActive) return; 
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
 
     final gps = context.read<GPSController>();
     
     try {
       await gps.getPermissao();
-      gps.iniciarTracking();
+      gps.iniciarTracking(analyzer);
 
       if (comeco > 0) {
-        // Primeira vez: Faz o Countdown 3..2..1
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
           if (!mounted) {
             timer.cancel();
@@ -92,11 +100,12 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
           } else {
             timer.cancel();
             setState(() { comeco = 0; });
+            // LIMPAR DADOS SUJOS DO GPS DURANTE A CONTAGEM
+            gps.resetDados(); 
             _startTimer();
           }
         });
       } else {
-        // Resume: Retoma imediatamente o cronómetro
         _startTimer();
       }
     } catch (e) {
@@ -105,12 +114,17 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
   }
 
   void _stopTimer() {
-    if (_horaQueComecou != null) {
-      _tempoAcumuladoAntesDaPausa += DateTime.now().difference(_horaQueComecou!);
-      _horaQueComecou = null; 
-    }
-    _timer?.cancel();
-    _timer = null;
+    // AVISAR O ECRÃ PARA ATUALIZAR (Mostrar o botão)
+    setState(() { 
+      if (_horaQueComecou != null) {
+        _tempoAcumuladoAntesDaPausa += DateTime.now().difference(_horaQueComecou!);
+        _horaQueComecou = null; 
+      }
+      _timer?.cancel();
+      _timer = null;
+    });
+    
+    context.read<ImprovedMovementAnalyzer>().stopRecording();
     context.read<GPSController>().pararTracking();
   }
 
@@ -173,6 +187,21 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
               onStop: _stopTimer,
               onReset: _resetCounters,
             ),
+
+            if (_timer == null && _tempoAtual.inSeconds > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilledButton.icon(
+                  onPressed: _showCompletionDialog,
+                  icon: const Icon(Icons.save),
+                  label: const Text("FINALIZAR E EXPORTAR"),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                ),
+              ),
+              
             const SizedBox(height: 20),
             GridView.count(
               shrinkWrap: true,
@@ -255,6 +284,46 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
           ],
         ),
       ),
+    );
+  }
+
+  void _showCompletionDialog() {
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
+    final minutos = _tempoAtual.inMinutes;
+    final segundos = _tempoAtual.inSeconds % 60;
+    final tempoFinalStr = "${minutos.toString().padLeft(2, '0')}:${segundos.toString().padLeft(2, '0')}";
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('🏁 Treino Concluído!'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Distância: ${context.read<GPSController>().distanciaTotal.toStringAsFixed(0)}m'),
+              Text('Remadas: ${analyzer.totalStrokes}'),
+              Text('Tempo: $tempoFinalStr'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                context.read<GPSController>().exportarTreinoTCX();
+              },
+              child: const Text('Exportar (Strava)', style: TextStyle(color: Colors.orange)),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _resetCounters();
+              },
+              child: const Text('Novo Treino'),
+            ),
+          ],
+        );
+      },
     );
   }
 }

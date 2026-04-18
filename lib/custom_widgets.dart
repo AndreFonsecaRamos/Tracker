@@ -165,8 +165,7 @@ class PM5Monitor extends StatelessWidget {
                 color: Colors.black54,
               ),
             ),
-            // A MAGIA ESTÁ AQUI: O Expanded + FittedBox obriga o texto a encolher ou crescer 
-            // exatatamente à medida do ecrã do teu telemóvel, sem nunca dar Overflow!
+            
             Expanded(
               child: FittedBox(
                 fit: BoxFit.contain, // Ajusta a fonte para caber no limite

@@ -38,6 +38,13 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
     
     WidgetsBinding.instance.addObserver(this); 
     WakelockPlus.enable(); 
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<GPSController>().resetDados();
+        context.read<ImprovedMovementAnalyzer>().reset();
+      }
+    });
   }
 
   @override
@@ -66,10 +73,12 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
     });
   }
 
+  // --- GATILHO AUTOMÁTICO: TEMPO ---
   void _startTimer() {
     if (_timer != null && _timer!.isActive) return;
 
     _horaUltimoResume = DateTime.now();
+    context.read<ImprovedMovementAnalyzer>().startRecording();
 
     _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
       if (!mounted) {
@@ -82,12 +91,25 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
       final tempoAmostrar = _tempoRestanteFase - tempoPassado;
 
       if (tempoAmostrar.inSeconds <= 0) {
-        setState(() {
-          _isDescanso = !_isDescanso;
-          _tempoRestanteFase = _isDescanso ? widget.intervalo : widget.tempo;
-          _horaUltimoResume = DateTime.now(); 
-          _tempoAtual = _tempoRestanteFase;
-        });
+        if (!_isDescanso) {
+          // Terminou o Trabalho, vai para Descanso
+          setState(() {
+            _isDescanso = true; 
+            _tempoRestanteFase = widget.intervalo; 
+            _horaUltimoResume = DateTime.now(); 
+            _tempoAtual = _tempoRestanteFase;
+          });
+        } else {
+          // Terminou o Descanso, vai para Trabalho
+          setState(() {
+            _isDescanso = false; 
+            _tempoRestanteFase = widget.tempo; 
+            _horaUltimoResume = DateTime.now(); 
+            _tempoAtual = _tempoRestanteFase;
+          });
+          
+          context.read<GPSController>().resetDados(); 
+        }
       } else {
         setState(() {
           _tempoAtual = tempoAmostrar;
@@ -97,14 +119,14 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
   }
 
   void _startWork() async {
-    // CORREÇÃO: Verifica de forma fiável se já está a correr para permitir Resume
     if (_timer != null && _timer!.isActive) return; 
 
     final gps = context.read<GPSController>();
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
     
     try {
       await gps.getPermissao();
-      gps.iniciarTracking();
+      gps.iniciarTracking(analyzer);
 
       if (comeco > 0) {
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -118,11 +140,11 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
           } else {
             timer.cancel();
             setState(() { comeco = 0; });
+            gps.resetDados();
             _startTimer();
           }
         });
       } else {
-        // Modo Resume sem esperar 3 segundos
         _startTimer();
       }
     } catch (e) {
@@ -131,13 +153,17 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
   }
 
   void _stopTimer() {
-    if (_horaUltimoResume != null) {
-      _tempoRestanteFase = _tempoRestanteFase - DateTime.now().difference(_horaUltimoResume!);
-      _horaUltimoResume = null;
-    }
+    // AVISAR O ECRÃ PARA ATUALIZAR (Mostrar o botão)
+    setState(() {
+      if (_horaUltimoResume != null) {
+        _tempoRestanteFase = _tempoRestanteFase - DateTime.now().difference(_horaUltimoResume!);
+        _horaUltimoResume = null;
+      }
+      _timer?.cancel();
+      _timer = null;
+    });
     
-    _timer?.cancel();
-    _timer = null;
+    context.read<ImprovedMovementAnalyzer>().stopRecording();
     context.read<GPSController>().pararTracking();
   }
 
@@ -147,6 +173,45 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
     WidgetsBinding.instance.removeObserver(this); 
     WakelockPlus.disable(); 
     super.dispose();
+  }
+
+  // --- JANELA DE FIM E EXPORTAÇÃO ---
+  void _showCompletionDialog() {
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
+    final gps = context.read<GPSController>();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('🏁 Treino Concluído!'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Distância Total: ${gps.distanciaTotal.toStringAsFixed(0)}m'),
+              Text('Remadas: ${analyzer.totalStrokes}'),
+              Text('Voga Média: ${analyzer.averageStrokeRate.toStringAsFixed(1)} spm'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                context.read<GPSController>().exportarTreinoTCX();
+              },
+              child: const Text('Exportar (Strava)', style: TextStyle(color: Colors.orange)),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _resetCounters();
+              },
+              child: const Text('Novo Treino'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -217,6 +282,20 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
               onStop: _stopTimer,
               onReset: _resetCounters,
             ),
+            // --- BOTÃO DE FINALIZAÇÃO MANUAL ---
+            if (comeco == 0 && _timer == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilledButton.icon(
+                  onPressed: _showCompletionDialog,
+                  icon: const Icon(Icons.save),
+                  label: const Text("FINALIZAR E EXPORTAR"),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                ),
+              ),
             const SizedBox(height: 20),
             GridView.count(
               shrinkWrap: true,

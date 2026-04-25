@@ -51,7 +51,6 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       if (_horaUltimoResume != null) {
-        _stopTimer();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Treino em pausa (App em segundo plano)')),
         );

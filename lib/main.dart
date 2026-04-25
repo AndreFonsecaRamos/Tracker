@@ -3,10 +3,16 @@ import 'home_page.dart';
 import 'package:provider/provider.dart';
 import 'expGPS.dart';
 import 'movementeanalizer.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized(); 
+
+  await Permission.notification.request();
+
   runApp(
+    // O teu MultiProvider continua igual...
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => GPSController()),

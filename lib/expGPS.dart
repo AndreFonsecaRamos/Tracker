@@ -5,6 +5,7 @@ import 'movementeanalizer.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'dart:io' show Platform;
 
 // 1. CLASSE DE DADOS (Átomo)
 class Pontodetreino {
@@ -49,10 +50,28 @@ class GPSController extends ChangeNotifier {
 
   // 2. MÉTODO PARA LIGAR O TRACKING (Recebe o analyzer para saber a voga)
   void iniciarTracking(ImprovedMovementAnalyzer analyzer) {
-    const settings = LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 0,
-    );
+    // 1. CRIAR AS DEFINIÇÕES BASEADAS NO SISTEMA OPERATIVO
+    LocationSettings settings;
+
+    if (Platform.isAndroid) {
+      // DEFINIÇÕES COM PASSE VIP PARA ANDROID
+      settings = AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+        forceLocationManager: true, // Ajuda a manter o sinal forte
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: "Treino de Remo",
+          notificationText: "A gravar a tua sessão...",
+          enableWakeLock: true, // Não deixa o processador adormecer!
+        ),
+      );
+    } else {
+      // DEFINIÇÕES NORMAIS PARA iOS (por agora)
+      settings = const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+      );
+    }
 
     _posicaoSubscription = Geolocator.getPositionStream(locationSettings: settings).listen(
       (pos) {
@@ -62,7 +81,6 @@ class GPSController extends ChangeNotifier {
         long = pos.longitude;
 
         if (ultimaPosicao != null) {
-          // Chamamos o cálculo passando a voga e se está a gravar
           _processarPonto(pos, analyzer.strokesPerMinute.round(), analyzer.isRecording);
         }
 
@@ -77,7 +95,7 @@ class GPSController extends ChangeNotifier {
     );
   }
 
-  // 3. MÉTODO DE CÁLCULO E REGISTO (Um único nome, sem duplicados)
+  // 3. MÉTODO DE CÁLCULO E REGISTO (Limpo e sem erros)
   void _processarPonto(Position novaPosicao, int voga, bool gravando) {
     final distancia = Geolocator.distanceBetween(
       ultimaPosicao!.latitude,
@@ -105,7 +123,7 @@ class GPSController extends ChangeNotifier {
       distanciaUltimaRemada = distancia;
     }
 
-    // REGISTO PARA O STRAVA (Cadeado de gravação)
+    // REGISTO PARA O STRAVA
     if (gravando) {
       sessaoAtual.add(
         Pontodetreino(
@@ -119,7 +137,6 @@ class GPSController extends ChangeNotifier {
     }
 
     print("Ponto gravado! Total na lista: ${sessaoAtual.length} | Voga: $voga");
-
     _atualizarVelocidadeMedia(velocidadeInstantanea);
   }
 

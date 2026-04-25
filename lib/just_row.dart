@@ -39,7 +39,6 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       if (_horaQueComecou != null) {
-        _stopTimer();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Treino em pausa (App em segundo plano)')),
         );

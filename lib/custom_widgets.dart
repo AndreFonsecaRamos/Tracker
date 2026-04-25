@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:ui'; // Obrigatório para o FontFeature.tabularFigures()
 
-/// 1. CARTÃO DE ESTATÍSTICA (Efeito PM5 - Grande e Legível)
+/// 1. CARTÃO DE ESTATÍSTICA (Efeito PM5 - Grande e Legível para os ecrãs normais)
 class StatCard extends StatelessWidget {
   final String title;
   final String value;
@@ -37,9 +38,10 @@ class StatCard extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
-              fontSize: 32, // Letra bem grande para veres no barco!
+              fontSize: 32, 
               fontWeight: FontWeight.bold,
               color: baseColor,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
         ],
@@ -88,7 +90,7 @@ class ControlButtons extends StatelessWidget {
   }
 }
 
-/// --- O MODO PM5 (Apenas para modo Horizontal) ---
+/// 3. O MODO PM5 (O Monitor Gigante para o modo Horizontal)
 class PM5Monitor extends StatelessWidget {
   final String tempo;
   final String spm;
@@ -107,39 +109,46 @@ class PM5Monitor extends StatelessWidget {
   Widget build(BuildContext context) {
     // Fundo cinza claro com letras pretas é o melhor para ler ao sol
     return Container(
-      color: const Color(0xFFE0E0E0), // Cinza tipo ecrã LCD
+      color: const Color(0xFFE0E0E0),
       padding: const EdgeInsets.all(8.0),
       child: Column(
         children: [
-          // LINHA DE CIMA: Tempo e Voga
+          // ---------------------------------------------------------
+          // LINHA SUPERIOR: Tempo e Voga
+          // ---------------------------------------------------------
           Expanded(
             flex: 2,
             child: Row(
               children: [
-                _buildPM5Block("TIME", tempo, isGiant: true),
-                Container(width: 4, color: Colors.black), // Divisória
-                _buildPM5Block("S/M", spm, isGiant: true),
+                Expanded(child: _buildPM5Block("TIME", tempo, isGiant: false)),
+                Container(width: 4, color: Colors.black), // Divisória Vertical
+                Expanded(child: _buildPM5Block("S/M", spm, isGiant: false)),
               ],
             ),
           ),
-          Container(height: 4, color: Colors.black), // Divisória horizontal
           
+          Container(height: 4, color: Colors.black), // Divisória Horizontal
+          
+          // ---------------------------------------------------------
           // MEIO: Parcial /500m (O mais importante, gigante no meio)
+          // ---------------------------------------------------------
           Expanded(
             flex: 3,
             child: _buildPM5Block("/500m", parcial, isGiant: true, forceCenter: true),
           ),
-          Container(height: 4, color: Colors.black), // Divisória horizontal
           
-          // LINHA DE BAIXO: Distância e um espaço vazio (ou média no futuro)
+          Container(height: 4, color: Colors.black), // Divisória Horizontal
+          
+          // ---------------------------------------------------------
+          // LINHA INFERIOR: Distância e Average Pace
+          // ---------------------------------------------------------
           Expanded(
             flex: 2,
             child: Row(
               children: [
-                _buildPM5Block("METERS", distancia, isGiant: false),
-                Container(width: 4, color: Colors.black), // Divisória
-                // Espaço reservado para Average Pace ou Heart Rate futuro
-                _buildPM5Block("AVE /500m", "--:--", isGiant: false), 
+                Expanded(child: _buildPM5Block("METERS", distancia, isGiant: false)),
+                Container(width: 4, color: Colors.black), // Divisória Vertical
+                Expanded(child: _buildPM5Block("AVE /500m", "--:--", isGiant: false)), 
               ],
             ),
           ),
@@ -148,41 +157,38 @@ class PM5Monitor extends StatelessWidget {
     );
   }
 
-  Widget _buildPM5Block(String label, String value, {required bool isGiant, bool forceCenter = false}) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-        child: Column(
-          crossAxisAlignment: forceCenter ? CrossAxisAlignment.center : CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                fontFamily: 'monospace',
-                color: Colors.black54,
-              ),
-            ),
-            
-            Expanded(
+  // A "Fábrica" de blocos do PM5
+  Widget _buildPM5Block(String label, String value, {bool isGiant = false, bool forceCenter = false}) {
+    return Padding(
+      padding: const EdgeInsets.all(12.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start, // O Rótulo fica à esquerda
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.bold),
+          ),
+          
+          // O Valor estica-se
+          Expanded(
+            child: Container(
+              width: double.infinity, 
+              alignment: Alignment.center, 
               child: FittedBox(
-                fit: BoxFit.contain, // Ajusta a fonte para caber no limite
-                alignment: forceCenter ? Alignment.center : Alignment.centerLeft,
+                fit: BoxFit.scaleDown, 
                 child: Text(
                   value,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontFamily: 'monospace',
+                  style: TextStyle(
+                    fontSize: isGiant ? 90 : 60, 
+                    fontWeight: FontWeight.bold,
                     color: Colors.black,
-                    height: 1.0, 
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

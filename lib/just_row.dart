@@ -309,7 +309,10 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
           actions: [
             TextButton(
               onPressed: () {
-                context.read<GPSController>().exportarTreinoTCX();
+                final nav = Navigator.of(context);
+                final gps = context.read<GPSController>();
+                nav.pop();
+                gps.exportarTreinoTCX();
               },
               child: const Text('Exportar (Strava)', style: TextStyle(color: Colors.orange)),
             ),

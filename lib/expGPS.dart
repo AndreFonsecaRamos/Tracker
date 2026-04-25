@@ -43,7 +43,7 @@ class GPSController extends ChangeNotifier {
   static const double _velocidadeMaxima = 12.0; 
 
   final List<double> _historicoVelocidades = [];
-  static const int _tamanhoMediaMovel = 10; 
+  static const int _tamanhoMediaMovel = 15; 
 
   // A LISTA PARA O STRAVA
   List<Pontodetreino> sessaoAtual = [];
@@ -98,10 +98,8 @@ class GPSController extends ChangeNotifier {
   // 3. MÉTODO DE CÁLCULO E REGISTO (Limpo e sem erros)
   void _processarPonto(Position novaPosicao, int voga, bool gravando) {
     final distancia = Geolocator.distanceBetween(
-      ultimaPosicao!.latitude,
-      ultimaPosicao!.longitude,
-      novaPosicao.latitude,
-      novaPosicao.longitude,
+      ultimaPosicao!.latitude, ultimaPosicao!.longitude,
+      novaPosicao.latitude, novaPosicao.longitude,
     );
 
     final tempoDecorrido = novaPosicao.timestamp
@@ -111,11 +109,33 @@ class GPSController extends ChangeNotifier {
     if (tempoDecorrido <= 0) return;
 
     double velocidadeInstantanea = novaPosicao.speed;
+    
+    // Se o GPS disser que a velocidade é 0, mas andámos, calculamos à mão
     if (velocidadeInstantanea <= 0 && distancia > _distanciaMinima) {
       velocidadeInstantanea = distancia / tempoDecorrido;
     }
 
-    if (velocidadeInstantanea > _velocidadeMaxima) return; 
+    // ---------------------------------------------------------
+    // O TEU SANITY CHECK DINÂMICO (RATE OF CHANGE FILTER)
+    // ---------------------------------------------------------
+    if (_historicoVelocidades.isNotEmpty) {
+      double ultimaVelocidadeValida = _historicoVelocidades.last;
+      
+      // Diferença absoluta (positiva ou negativa) entre o ponto novo e o anterior
+      double diferenca = (velocidadeInstantanea - ultimaVelocidadeValida).abs();
+
+      // Se a velocidade saltar mais de 3.0 m/s (10.8 km/h) num segundo, é erro de satélite!
+      // (Só aplicamos isto se os pontos tiverem 1 ou 2 segundos de diferença, se o ecrã 
+      // esteve desligado 10 minutos, o salto é normal).
+      if (diferenca > 1.0 && tempoDecorrido < 1.0) {
+        print("🚨 OUTLIER BLOQUEADO: Salto irreal de ${diferenca.toStringAsFixed(1)} m/s");
+        // Em vez de estragar a média, assumimos que a velocidade se manteve
+        velocidadeInstantanea = ultimaVelocidadeValida; 
+      }
+    }
+
+    // Barreira de segurança final (ninguém rema a mais de 25 km/h / 7 m/s)
+    if (velocidadeInstantanea > 7.0) velocidadeInstantanea = 7.0; 
 
     // Atualiza acumulados
     if (distancia > _distanciaMinima && distancia < 20.0) { 
@@ -136,18 +156,22 @@ class GPSController extends ChangeNotifier {
       );
     }
 
-    print("Ponto gravado! Total na lista: ${sessaoAtual.length} | Voga: $voga");
+    // Envia a velocidade limpa para a média móvel
     _atualizarVelocidadeMedia(velocidadeInstantanea);
+    notifyListeners();
   }
 
+  // A função da Média Móvel volta a ser a original, com um corte seguro
   void _atualizarVelocidadeMedia(double novaVelocidade) {
     _historicoVelocidades.add(novaVelocidade);
+    
     if (_historicoVelocidades.length > _tamanhoMediaMovel) {
       _historicoVelocidades.removeAt(0);
     }
+    
     velocidadeAtual = _historicoVelocidades.reduce((a, b) => a + b) / _historicoVelocidades.length;
 
-    if (velocidadeAtual > 0.5) { 
+    if (velocidadeAtual > 0.8) { 
       parcialPor500m = 500.0 / velocidadeAtual;
     } else {
       parcialPor500m = 0.0; 

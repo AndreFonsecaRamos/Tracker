@@ -104,11 +104,6 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     else if (_dynamicAcceleration < recoveryThreshold && !_isRecoveryPhase) {
       _isRecoveryPhase = true; 
     }
-
-    void updateThreshold(double newValue) {
-      driveThreshold = newValue;
-      notifyListeners(); // Isto faz com que a UI se atualize enquanto deslizas
-    }
   }
   
   void _registerStroke(DateTime strokeTime) {

@@ -156,6 +156,7 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
             spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
             parcial: gps.getParcialFormatado(),
             distancia: gps.distanciaTotal.toStringAsFixed(0),
+            averageParcial: gps.getAverageParcialFormatado(),
           ),
         ),
       );

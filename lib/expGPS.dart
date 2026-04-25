@@ -45,6 +45,8 @@ class GPSController extends ChangeNotifier {
   final List<double> _historicoVelocidades = [];
   static const int _tamanhoMediaMovel = 15; 
 
+  DateTime? _inicioSessao;
+
   // A LISTA PARA O STRAVA
   List<Pontodetreino> sessaoAtual = [];
 
@@ -137,10 +139,10 @@ class GPSController extends ChangeNotifier {
     // Barreira de segurança final (ninguém rema a mais de 25 km/h / 7 m/s)
     if (velocidadeInstantanea > 7.0) velocidadeInstantanea = 7.0; 
 
-    // Atualiza acumulados
     if (distancia > _distanciaMinima && distancia < 20.0) { 
       distanciaTotal += distancia;
       distanciaUltimaRemada = distancia;
+      _inicioSessao ??= DateTime.now(); // ← só define uma vez
     }
 
     // REGISTO PARA O STRAVA
@@ -179,6 +181,18 @@ class GPSController extends ChangeNotifier {
   }
 
   // MÉTODOS DE UTILIDADE
+  String getAverageParcialFormatado() {
+      if (_inicioSessao == null || distanciaTotal < 10) return "--:--";
+      
+      final segundosTotais = DateTime.now().difference(_inicioSessao!).inSeconds.toDouble();
+      final averagePor500m = (segundosTotais / distanciaTotal) * 500.0;
+      
+      if (averagePor500m <= 0 || averagePor500m > 3600) return "--:--";
+      final minutos = (averagePor500m / 60).floor();
+      final segundos = (averagePor500m % 60).floor();
+      return "${minutos.toString().padLeft(1, '0')}:${segundos.toString().padLeft(2, '0')}";
+    }
+
   String getParcialFormatado() {
     if (parcialPor500m <= 0 || parcialPor500m > 3600) return "--:--";
     final minutos = (parcialPor500m / 60).floor();
@@ -208,8 +222,9 @@ class GPSController extends ChangeNotifier {
     distanciaUltimaRemada = 0.0;
     velocidadeAtual = 0.0;
     parcialPor500m = 0.0;
+    _inicioSessao = null; // ← ADICIONA AQUI
     _historicoVelocidades.clear();
-    sessaoAtual.clear(); // Limpa a lista do Strava
+    sessaoAtual.clear();
     notifyListeners();
   }
 

@@ -32,6 +32,8 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
   Duration _tempoAcumuladoAntesDaPausa = Duration.zero;
   Duration _tempoAtual = Duration.zero;
 
+  int _serieAtual = 1;
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +70,7 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
       _tempoAcumuladoAntesDaPausa = Duration.zero;
       _tempoAtual = Duration.zero;
       comeco = 3;
+      _serieAtual = 1;
     });
   }
 
@@ -111,9 +114,9 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
           // GATILHO 2: O descanso terminou
           setState(() {
             _isDescanso = false; 
-            _horaQueComecou = agora; // Relógio regressa à contagem de trabalho
+            _horaQueComecou = agora;
+            _serieAtual++; // ← ADICIONA AQUI
           });
-          
           currentGps.resetDados(); 
         } else {
           setState(() {
@@ -246,6 +249,8 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
             spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
             parcial: gps.getParcialFormatado(),
             distancia: metrosRestantes.toStringAsFixed(0),
+            serieAtual: _serieAtual, 
+            averageParcial: gps.getAverageParcialFormatado(),
           ),
         ),
       );

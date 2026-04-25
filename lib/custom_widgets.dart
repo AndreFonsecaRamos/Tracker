@@ -96,6 +96,8 @@ class PM5Monitor extends StatelessWidget {
   final String spm;
   final String parcial;
   final String distancia;
+  final int serieAtual;
+  final String averageParcial;
 
   const PM5Monitor({
     super.key,
@@ -103,6 +105,8 @@ class PM5Monitor extends StatelessWidget {
     required this.spm,
     required this.parcial,
     required this.distancia,
+    this.serieAtual = 1,
+    this.averageParcial = "--:--",
   });
 
   @override
@@ -121,6 +125,8 @@ class PM5Monitor extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(child: _buildPM5Block("TIME", tempo, isGiant: false)),
+                Container(width: 4, color: Colors.black), // Divisória Vertical
+                Expanded(child: _buildPM5Block("AVE /500m", averageParcial, isGiant: false)),
                 Container(width: 4, color: Colors.black), // Divisória Vertical
                 Expanded(child: _buildPM5Block("S/M", spm, isGiant: false)),
               ],
@@ -147,8 +153,10 @@ class PM5Monitor extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(child: _buildPM5Block("METERS", distancia, isGiant: false)),
-                Container(width: 4, color: Colors.black), // Divisória Vertical
-                Expanded(child: _buildPM5Block("AVE /500m", "--:--", isGiant: false)), 
+                Container(width: 4, color: Colors.black),
+                Expanded(child: _buildPM5Block("SÉRIE", serieAtual.toString(), isGiant: false)),
+                Container(width: 4, color: Colors.black),
+                Expanded(child: _buildPM5Block("AVE /500m", "--:--", isGiant: false)),
               ],
             ),
           ),

@@ -30,6 +30,8 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
   Duration _tempoRestanteFase = Duration.zero;
   DateTime? _horaUltimoResume;
 
+  int _serieAtual = 1;
+
   @override
   void initState() {
     super.initState();
@@ -69,6 +71,7 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
       _tempoRestanteFase = widget.tempo;
       _tempoAtual = widget.tempo;
       _horaUltimoResume = null;
+      _serieAtual = 1;
     });
   }
 
@@ -105,8 +108,8 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
             _tempoRestanteFase = widget.tempo; 
             _horaUltimoResume = DateTime.now(); 
             _tempoAtual = _tempoRestanteFase;
+            _serieAtual++; // ← ADICIONA AQUI
           });
-          
           context.read<GPSController>().resetDados(); 
         }
       } else {
@@ -237,6 +240,8 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
             spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
             parcial: gps.getParcialFormatado(),
             distancia: gps.distanciaTotal.toStringAsFixed(0),
+            serieAtual: _serieAtual, 
+            averageParcial: gps.getAverageParcialFormatado(),
           ),
         ),
       );

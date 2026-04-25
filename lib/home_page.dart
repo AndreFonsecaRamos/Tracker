@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'segunda_pagina.dart';
 import 'pagina_metros.dart';
 import 'just_row.dart';
+import 'movementeanalizer.dart';
+import 'package:provider/provider.dart';
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
@@ -16,7 +18,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3, // As 3 abas: Just Row, Tempo, Distância
+      length: 4, // As 3 abas: Just Row, Tempo, Distância
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -26,6 +28,7 @@ class _MyHomePageState extends State<MyHomePage> {
               Tab(icon: Icon(Icons.rowing), text: "Just Row"),
               Tab(icon: Icon(Icons.timer), text: "Tempo"),
               Tab(icon: Icon(Icons.straighten), text: "Distância"),
+              Tab(icon: Icon(Icons.tune), text: "Defenições"),
             ],
           ),
         ),
@@ -34,8 +37,69 @@ class _MyHomePageState extends State<MyHomePage> {
             JustRowMenu(),
             IntervaloTempoMenu(),
             IntervaloDistanciaMenu(),
+            CalibracaoMenu(),
           ],
         ),
+      ),
+    );
+  }
+}
+
+//menu de calibração
+class CalibracaoMenu extends StatelessWidget {
+  const CalibracaoMenu({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final analyzer = context.watch<ImprovedMovementAnalyzer>();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        children: [
+          const Text("CALIBRAÇÃO DE SENSIBILIDADE", 
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          const SizedBox(height: 30),
+          
+          // MOSTRADOR EM TEMPO REAL
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: analyzer.magnitude > analyzer.driveThreshold ? Colors.green : Colors.grey),
+            ),
+            child: Column(
+              children: [
+                const Text("Aceleração Atual:"),
+                Text(analyzer.magnitude.toStringAsFixed(2), 
+                  style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 40),
+          Text("Limiar de Remada (Threshold): ${analyzer.driveThreshold.toStringAsFixed(2)}"),
+          
+          // O SLIDER PARA AJUSTAR
+          Slider(
+            value: analyzer.driveThreshold,
+            min: 0.1,
+            max: 1.5,
+            divisions: 14,
+            label: analyzer.driveThreshold.toStringAsFixed(2),
+            onChanged: (double value) {
+              analyzer.updateThreshold(value);
+            },
+          ),
+          
+          const SizedBox(height: 20),
+          const Text(
+            "Dica: Se a app contar remadas a mais (falsos positivos), aumenta o valor. Se não detetar as tuas remadas, diminui o valor.",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
       ),
     );
   }
@@ -47,7 +111,7 @@ class JustRowMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    return SingleChildScrollView(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -90,7 +154,6 @@ class _IntervaloTempoMenuState extends State<IntervaloTempoMenu> {
 
   @override
   Widget build(BuildContext context) {
-    // 1. SingleChildScrollView é a MAGIA aqui. Permite fazer scroll quando o teclado sobe.
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.all(20.0),

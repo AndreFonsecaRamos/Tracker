@@ -33,8 +33,8 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   double _dynamicAcceleration = 0.0;
   bool _isRecoveryPhase = true; 
   
-  static const double _driveThreshold = 0.4;    
-  static const double _recoveryThreshold = 0.0; 
+  double driveThreshold = 0.4;    
+  double recoveryThreshold = 0.0;
   
   static const int _minStrokeInterval = 800; 
   static const int _maxStrokeInterval = 4000; 
@@ -89,7 +89,7 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   void _detectStroke() {
     final now = DateTime.now();
     
-    if (_dynamicAcceleration > _driveThreshold && _isRecoveryPhase) {
+    if (_dynamicAcceleration > driveThreshold && _isRecoveryPhase) {
       if (lastStrokeTime == null || now.difference(lastStrokeTime!).inMilliseconds > _minStrokeInterval) {
         
         // CADEADO EM AÇÃO: Só regista se o utilizador já deu o Start!
@@ -101,8 +101,13 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
         notifyListeners(); 
       }
     }
-    else if (_dynamicAcceleration < _recoveryThreshold && !_isRecoveryPhase) {
+    else if (_dynamicAcceleration < recoveryThreshold && !_isRecoveryPhase) {
       _isRecoveryPhase = true; 
+    }
+
+    void updateThreshold(double newValue) {
+      driveThreshold = newValue;
+      notifyListeners(); // Isto faz com que a UI se atualize enquanto deslizas
     }
   }
   
@@ -180,6 +185,11 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   void stopAnalysis() {
     _subscription?.cancel();
     _subscription = null;
+  }
+  
+  void updateThreshold(double newValue) {
+    driveThreshold = newValue;
+    notifyListeners(); // Isto avisa o ecrã para se atualizar!
   }
   
   @override

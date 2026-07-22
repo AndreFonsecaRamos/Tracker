@@ -123,17 +123,15 @@ class GPSController extends ChangeNotifier {
     // O TEU SANITY CHECK DINÂMICO (RATE OF CHANGE FILTER)
     // ---------------------------------------------------------
     if (_emaInicializada) {
-      // Tiramos o .abs() para sabermos se estamos a acelerar (+) ou a travar (-)
       double diferenca = velocidadeInstantanea - _emaVelocidade;
       
-      // Limite de Aceleração: Um barco não arranca a mais de 2.0 m/s num só segundo.
-      // Se passar disto, assumimos que o máximo real é a velocidade antiga + 2.0
-      if (diferenca > 2.0) {
-        velocidadeInstantanea = _emaVelocidade + 2.0;
-      } 
-      // Limite de Travagem/Erro: O GPS não pode falhar a pique
-      else if (diferenca < -2.0) {
-        velocidadeInstantanea = _emaVelocidade - 2.0;
+      double limiteAceleracao = 2.0 * tempoDecorrido;
+      double limiteTravagem = 2.0 * tempoDecorrido;
+      
+      if (diferenca > limiteAceleracao) {
+        velocidadeInstantanea = _emaVelocidade + limiteAceleracao;
+      } else if (diferenca < -limiteTravagem) {
+        velocidadeInstantanea = _emaVelocidade - limiteTravagem;
       }
     }
 

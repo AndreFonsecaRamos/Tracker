@@ -168,7 +168,13 @@ class GPSController extends ChangeNotifier {
       _emaVelocidade = novaVelocidade;
       _emaInicializada = true;
     } else {
-      _emaVelocidade = _emaAlpha * novaVelocidade + (1 - _emaAlpha) * _emaVelocidade;
+      // Nos primeiros 10 segundos usa alpha mais alto para convergir rápido
+      final alphaEfetivo = (_inicioSessao != null && 
+          DateTime.now().difference(_inicioSessao!).inSeconds < 10)
+          ? 0.40  // arranque rápido
+          : _emaAlpha; // regime normal
+          
+      _emaVelocidade = alphaEfetivo * novaVelocidade + (1 - alphaEfetivo) * _emaVelocidade;
     }
 
     velocidadeAtual = _emaVelocidade;

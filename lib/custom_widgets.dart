@@ -126,8 +126,6 @@ class PM5Monitor extends StatelessWidget {
               children: [
                 Expanded(child: _buildPM5Block("TIME", tempo, isGiant: false)),
                 Container(width: 4, color: Colors.black), // Divisória Vertical
-                Expanded(child: _buildPM5Block("AVE /500m", averageParcial, isGiant: false)),
-                Container(width: 4, color: Colors.black), // Divisória Vertical
                 Expanded(child: _buildPM5Block("S/M", spm, isGiant: false)),
               ],
             ),
@@ -156,7 +154,7 @@ class PM5Monitor extends StatelessWidget {
                 Container(width: 4, color: Colors.black),
                 Expanded(child: _buildPM5Block("SÉRIE", serieAtual.toString(), isGiant: false)),
                 Container(width: 4, color: Colors.black),
-                Expanded(child: _buildPM5Block("AVE /500m", "--:--", isGiant: false)),
+                Expanded(child: _buildPM5Block("AVE /500m", averageParcial, isGiant: false)),
               ],
             ),
           ),

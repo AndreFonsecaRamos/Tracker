@@ -42,8 +42,10 @@ class GPSController extends ChangeNotifier {
   static const double _distanciaMinima = 0.5; 
   static const double _velocidadeMaxima = 12.0; 
 
-  final List<double> _historicoVelocidades = [];
-  static const int _tamanhoMediaMovel = 15; 
+  double _emaVelocidade = 0.0;
+  bool _emaInicializada = false;
+
+  static const double _emaAlpha = 0.25;
 
   DateTime? _inicioSessao;
 
@@ -120,19 +122,18 @@ class GPSController extends ChangeNotifier {
     // ---------------------------------------------------------
     // O TEU SANITY CHECK DINÂMICO (RATE OF CHANGE FILTER)
     // ---------------------------------------------------------
-    if (_historicoVelocidades.isNotEmpty) {
-      double ultimaVelocidadeValida = _historicoVelocidades.last;
+    if (_emaInicializada) {
+      // Tiramos o .abs() para sabermos se estamos a acelerar (+) ou a travar (-)
+      double diferenca = velocidadeInstantanea - _emaVelocidade;
       
-      // Diferença absoluta (positiva ou negativa) entre o ponto novo e o anterior
-      double diferenca = (velocidadeInstantanea - ultimaVelocidadeValida).abs();
-
-      // Se a velocidade saltar mais de 3.0 m/s (10.8 km/h) num segundo, é erro de satélite!
-      // (Só aplicamos isto se os pontos tiverem 1 ou 2 segundos de diferença, se o ecrã 
-      // esteve desligado 10 minutos, o salto é normal).
-      if (diferenca > 1.0 && tempoDecorrido < 1.0) {
-        print("🚨 OUTLIER BLOQUEADO: Salto irreal de ${diferenca.toStringAsFixed(1)} m/s");
-        // Em vez de estragar a média, assumimos que a velocidade se manteve
-        velocidadeInstantanea = ultimaVelocidadeValida; 
+      // Limite de Aceleração: Um barco não arranca a mais de 2.0 m/s num só segundo.
+      // Se passar disto, assumimos que o máximo real é a velocidade antiga + 2.0
+      if (diferenca > 2.0) {
+        velocidadeInstantanea = _emaVelocidade + 2.0;
+      } 
+      // Limite de Travagem/Erro: O GPS não pode falhar a pique
+      else if (diferenca < -2.0) {
+        velocidadeInstantanea = _emaVelocidade - 2.0;
       }
     }
 
@@ -165,18 +166,19 @@ class GPSController extends ChangeNotifier {
 
   // A função da Média Móvel volta a ser a original, com um corte seguro
   void _atualizarVelocidadeMedia(double novaVelocidade) {
-    _historicoVelocidades.add(novaVelocidade);
-    
-    if (_historicoVelocidades.length > _tamanhoMediaMovel) {
-      _historicoVelocidades.removeAt(0);
+    if (!_emaInicializada) {
+      _emaVelocidade = novaVelocidade;
+      _emaInicializada = true;
+    } else {
+      _emaVelocidade = _emaAlpha * novaVelocidade + (1 - _emaAlpha) * _emaVelocidade;
     }
-    
-    velocidadeAtual = _historicoVelocidades.reduce((a, b) => a + b) / _historicoVelocidades.length;
 
-    if (velocidadeAtual > 0.8) { 
+    velocidadeAtual = _emaVelocidade;
+
+    if (velocidadeAtual > 0.8) {
       parcialPor500m = 500.0 / velocidadeAtual;
     } else {
-      parcialPor500m = 0.0; 
+      parcialPor500m = 0.0;
     }
   }
 
@@ -214,7 +216,6 @@ class GPSController extends ChangeNotifier {
     await _posicaoSubscription?.cancel();
     _posicaoSubscription = null;
     ultimaPosicao = null;
-    _historicoVelocidades.clear();
   }
   
   void resetDados() {
@@ -222,8 +223,9 @@ class GPSController extends ChangeNotifier {
     distanciaUltimaRemada = 0.0;
     velocidadeAtual = 0.0;
     parcialPor500m = 0.0;
-    _inicioSessao = null; // ← ADICIONA AQUI
-    _historicoVelocidades.clear();
+    _emaVelocidade = 0.0;
+    _emaInicializada = false;
+    _inicioSessao = null;
     sessaoAtual.clear();
     notifyListeners();
   }
@@ -242,65 +244,62 @@ class GPSController extends ChangeNotifier {
 
   // --- FUNÇÃO PARA EXPORTAR PARA STRAVA (TCX) ---
   Future<void> exportarTreinoTCX() async {
+    debugPrint("🚣 EXPORT: sessaoAtual tem ${sessaoAtual.length} pontos");
+    erro = '';
+    
     if (sessaoAtual.isEmpty) {
-      erro = "Não há dados para exportar.";
+      erro = "Sem dados GPS para exportar. Verifica se o GPS teve sinal durante o treino.";
       notifyListeners();
       return;
     }
 
     try {
-      // 1. Criar o cabeçalho do ficheiro XML (Formato Garmin TCX)
       String tcx = '''<?xml version="1.0" encoding="UTF-8"?>
-<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
-  <Activities>
-    <Activity Sport="Rowing">
-      <Id>${sessaoAtual.first.tempo.toUtc().toIso8601String()}</Id>
-      <Lap StartTime="${sessaoAtual.first.tempo.toUtc().toIso8601String()}">
-        <TotalTimeSeconds>${sessaoAtual.last.tempo.difference(sessaoAtual.first.tempo).inSeconds}</TotalTimeSeconds>
-        <DistanceMeters>$distanciaTotal</DistanceMeters>
-        <Intensity>Active</Intensity>
-        <TriggerMethod>Manual</TriggerMethod>
-        <Track>''';
+  <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+    <Activities>
+      <Activity Sport="Rowing">
+        <Id>${sessaoAtual.first.tempo.toUtc().toIso8601String()}</Id>
+        <Lap StartTime="${sessaoAtual.first.tempo.toUtc().toIso8601String()}">
+          <TotalTimeSeconds>${sessaoAtual.last.tempo.difference(sessaoAtual.first.tempo).inSeconds}</TotalTimeSeconds>
+          <DistanceMeters>${distanciaTotal.toStringAsFixed(1)}</DistanceMeters>
+          <Intensity>Active</Intensity>
+          <TriggerMethod>Manual</TriggerMethod>
+          <Track>''';
 
-      // 2. Injetar todos os pontos gravados
       for (var ponto in sessaoAtual) {
         tcx += '''
-          <Trackpoint>
-            <Time>${ponto.tempo.toUtc().toIso8601String()}</Time>
-            <Position>
-              <LatitudeDegrees>${ponto.lat}</LatitudeDegrees>
-              <LongitudeDegrees>${ponto.long}</LongitudeDegrees>
-            </Position>
-            <Cadence>${ponto.cadencia}</Cadence>
-            <Extensions>
-              <TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">
-                <Speed>${ponto.velocidade}</Speed>
-              </TPX>
-            </Extensions>
-          </Trackpoint>''';
+            <Trackpoint>
+              <Time>${ponto.tempo.toUtc().toIso8601String()}</Time>
+              <Position>
+                <LatitudeDegrees>${ponto.lat}</LatitudeDegrees>
+                <LongitudeDegrees>${ponto.long}</LongitudeDegrees>
+              </Position>
+              <Cadence>${ponto.cadencia}</Cadence>
+              <Extensions>
+                <TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">
+                  <Speed>${ponto.velocidade}</Speed>
+                </TPX>
+              </Extensions>
+            </Trackpoint>''';
       }
 
-      // 3. Fechar o ficheiro XML
       tcx += '''
-        </Track>
-      </Lap>
-    </Activity>
-  </Activities>
-</TrainingCenterDatabase>''';
+          </Track>
+        </Lap>
+      </Activity>
+    </Activities>
+  </TrainingCenterDatabase>''';
 
-      // 4. Encontrar uma pasta temporária no telemóvel para guardar o ficheiro
       final directory = await getTemporaryDirectory();
-      
-      // Nome do ficheiro com a data atual (ex: Treino_Rowing_20240510_1530.tcx)
       final dataStr = DateTime.now().toIso8601String().replaceAll(':', '').split('.').first;
       final file = File('${directory.path}/Treino_Rowing_$dataStr.tcx');
-      
-      // Escrever o texto para o ficheiro físico
       await file.writeAsString(tcx);
 
-      // 5. Abrir a janela de Partilha do Android/iOS!
-      await Share.shareXFiles([XFile(file.path)], text: 'O meu treino de Remo!');
-      
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'O meu treino de Remo!',
+      );
+
     } catch (e) {
       erro = "Erro ao exportar: $e";
       notifyListeners();

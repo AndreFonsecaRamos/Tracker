@@ -1,7 +1,10 @@
 implementar:
 curva de potencia
 ligar varios telemoveis
-
-
-corrigir:
-overflow quando o teclado esta posto no modo just row
+apitos aos 250m, quando a serie começa e quando a serie acaba
+implementar um modo batary save que apenas liga o gps de 1:30 em 1:30 calcula o pace
+    faz as contas e requezita o pace quando daria 500m sse quando requesitar outra vez 
+    já estiver no 500m aparece o parcial e volta a perguntar so 1:30 depois e repete tudo
+implementar a coneção do acelerometro com o gps para permitir saber em que faze está e ajustar
+    o alpha dinamicamente para quando esta no drive ser mais sensivel ou seja mais alto e quando
+    está em recovery ser menos reativo

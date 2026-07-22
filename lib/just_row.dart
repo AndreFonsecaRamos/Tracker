@@ -309,11 +309,22 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
           ),
           actions: [
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 final nav = Navigator.of(context);
                 final gps = context.read<GPSController>();
                 nav.pop();
-                gps.exportarTreinoTCX();
+                
+                await gps.exportarTreinoTCX();
+                
+                // Se houve erro, mostra ao utilizador
+                if (gps.erro.isNotEmpty && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(gps.erro),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               },
               child: const Text('Exportar (Strava)', style: TextStyle(color: Colors.orange)),
             ),

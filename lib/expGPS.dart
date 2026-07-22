@@ -28,49 +28,49 @@ class GPSController extends ChangeNotifier {
   double lat = 0.0;
   double long = 0.0;
   String erro = '';
-  
+
   double distanciaTotal = 0.0;
   double distanciaUltimaRemada = 0.0;
-  double velocidadeAtual = 0.0; 
-  double parcialPor500m = 0.0; 
+  double velocidadeAtual = 0.0;
+  double parcialPor500m = 0.0;
 
   Position? ultimaPosicao;
   StreamSubscription<Position>? _posicaoSubscription;
   DateTime? _ultimoUpdate;
 
-  static const double _precisaoMinima = 15.0; 
-  static const double _distanciaMinima = 0.5; 
-  static const double _velocidadeMaxima = 12.0; 
+  static const double _precisaoMinima = 15.0;
+  static const double _distanciaMinima = 0.5;
 
-  double _emaVelocidade = 0.0;
+  // --- FILTRO DE DOIS ANDARES ---
+  double _ema1 = 0.0;
+  double _ema2 = 0.0;
   bool _emaInicializada = false;
 
-  static const double _emaAlpha = 0.25;
+  static const double _alpha1 = 0.35; // Reativo — captura mudanças reais
+  static const double _alpha2 = 0.18; // Suave — elimina o ruído residual
 
+  // --- AVERAGE /500m ---
   DateTime? _inicioSessao;
 
-  // A LISTA PARA O STRAVA
+  // --- LISTA PARA O STRAVA ---
   List<Pontodetreino> sessaoAtual = [];
 
-  // 2. MÉTODO PARA LIGAR O TRACKING (Recebe o analyzer para saber a voga)
+  // 2. MÉTODO PARA LIGAR O TRACKING
   void iniciarTracking(ImprovedMovementAnalyzer analyzer) {
-    // 1. CRIAR AS DEFINIÇÕES BASEADAS NO SISTEMA OPERATIVO
     LocationSettings settings;
 
     if (Platform.isAndroid) {
-      // DEFINIÇÕES COM PASSE VIP PARA ANDROID
       settings = AndroidSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
-        forceLocationManager: true, // Ajuda a manter o sinal forte
+        forceLocationManager: true,
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationTitle: "Treino de Remo",
           notificationText: "A gravar a tua sessão...",
-          enableWakeLock: true, // Não deixa o processador adormecer!
+          enableWakeLock: true,
         ),
       );
     } else {
-      // DEFINIÇÕES NORMAIS PARA iOS (por agora)
       settings = const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
@@ -99,7 +99,7 @@ class GPSController extends ChangeNotifier {
     );
   }
 
-  // 3. MÉTODO DE CÁLCULO E REGISTO (Limpo e sem erros)
+  // 3. MÉTODO DE CÁLCULO E REGISTO
   void _processarPonto(Position novaPosicao, int voga, bool gravando) {
     final distancia = Geolocator.distanceBetween(
       ultimaPosicao!.latitude, ultimaPosicao!.longitude,
@@ -113,38 +113,35 @@ class GPSController extends ChangeNotifier {
     if (tempoDecorrido <= 0) return;
 
     double velocidadeInstantanea = novaPosicao.speed;
-    
-    // Se o GPS disser que a velocidade é 0, mas andámos, calculamos à mão
+
+    // Se o GPS reportar 0 mas nos movemos, calculamos à mão
     if (velocidadeInstantanea <= 0 && distancia > _distanciaMinima) {
       velocidadeInstantanea = distancia / tempoDecorrido;
     }
 
-    // ---------------------------------------------------------
-    // O TEU SANITY CHECK DINÂMICO (RATE OF CHANGE FILTER)
-    // ---------------------------------------------------------
+    // --- RATE OF CHANGE FILTER (escalado pelo tempo) ---
     if (_emaInicializada) {
-      double diferenca = velocidadeInstantanea - _emaVelocidade;
-      
-      double limiteAceleracao = 2.0 * tempoDecorrido;
-      double limiteTravagem = 2.0 * tempoDecorrido;
-      
-      if (diferenca > limiteAceleracao) {
-        velocidadeInstantanea = _emaVelocidade + limiteAceleracao;
-      } else if (diferenca < -limiteTravagem) {
-        velocidadeInstantanea = _emaVelocidade - limiteTravagem;
+      final double diferenca = velocidadeInstantanea - _ema1;
+      final double limite = 2.0 * tempoDecorrido;
+
+      if (diferenca > limite) {
+        velocidadeInstantanea = _ema1 + limite;
+      } else if (diferenca < -limite) {
+        velocidadeInstantanea = _ema1 - limite;
       }
     }
 
-    // Barreira de segurança final (ninguém rema a mais de 25 km/h / 7 m/s)
-    if (velocidadeInstantanea > 7.0) velocidadeInstantanea = 7.0; 
+    // Barreira de segurança final (ninguém rema a mais de 7 m/s / 25 km/h)
+    if (velocidadeInstantanea > 7.0) velocidadeInstantanea = 7.0;
 
-    if (distancia > _distanciaMinima && distancia < 20.0) { 
+    // Acumula distância
+    if (distancia > _distanciaMinima && distancia < 20.0) {
       distanciaTotal += distancia;
       distanciaUltimaRemada = distancia;
-      _inicioSessao ??= DateTime.now(); // ← só define uma vez
+      _inicioSessao ??= DateTime.now();
     }
 
-    // REGISTO PARA O STRAVA
+    // Registo para o Strava
     if (gravando) {
       sessaoAtual.add(
         Pontodetreino(
@@ -157,27 +154,29 @@ class GPSController extends ChangeNotifier {
       );
     }
 
-    // Envia a velocidade limpa para a média móvel
     _atualizarVelocidadeMedia(velocidadeInstantanea);
     notifyListeners();
   }
 
-  // A função da Média Móvel volta a ser a original, com um corte seguro
+  // --- FILTRO DE DOIS ANDARES ---
   void _atualizarVelocidadeMedia(double novaVelocidade) {
     if (!_emaInicializada) {
-      _emaVelocidade = novaVelocidade;
+      // Primeiro ponto: inicializa ambos os andares diretamente
+      _ema1 = novaVelocidade;
+      _ema2 = novaVelocidade;
       _emaInicializada = true;
     } else {
       // Nos primeiros 10 segundos usa alpha mais alto para convergir rápido
-      final alphaEfetivo = (_inicioSessao != null && 
-          DateTime.now().difference(_inicioSessao!).inSeconds < 10)
-          ? 0.40  // arranque rápido
-          : _emaAlpha; // regime normal
-          
-      _emaVelocidade = alphaEfetivo * novaVelocidade + (1 - alphaEfetivo) * _emaVelocidade;
+      final double alphaEfetivo1 = (_inicioSessao != null &&
+              DateTime.now().difference(_inicioSessao!).inSeconds < 10)
+          ? 0.50
+          : _alpha1;
+
+      _ema1 = alphaEfetivo1 * novaVelocidade + (1 - alphaEfetivo1) * _ema1;
+      _ema2 = _alpha2 * _ema1 + (1 - _alpha2) * _ema2;
     }
 
-    velocidadeAtual = _emaVelocidade;
+    velocidadeAtual = _ema2;
 
     if (velocidadeAtual > 0.8) {
       parcialPor500m = 500.0 / velocidadeAtual;
@@ -186,24 +185,24 @@ class GPSController extends ChangeNotifier {
     }
   }
 
-  // MÉTODOS DE UTILIDADE
-  String getAverageParcialFormatado() {
-      if (_inicioSessao == null || distanciaTotal < 10) return "--:--";
-      
-      final segundosTotais = DateTime.now().difference(_inicioSessao!).inSeconds.toDouble();
-      final averagePor500m = (segundosTotais / distanciaTotal) * 500.0;
-      
-      if (averagePor500m <= 0 || averagePor500m > 3600) return "--:--";
-      final minutos = (averagePor500m / 60).floor();
-      final segundos = (averagePor500m % 60).floor();
-      return "${minutos.toString().padLeft(1, '0')}:${segundos.toString().padLeft(2, '0')}";
-    }
+  // --- MÉTODOS DE UTILIDADE ---
 
   String getParcialFormatado() {
     if (parcialPor500m <= 0 || parcialPor500m > 3600) return "--:--";
     final minutos = (parcialPor500m / 60).floor();
     final segundos = (parcialPor500m % 60).floor();
-    return "${minutos.toString().padLeft(1, '0')}:${segundos.toString().padLeft(2, '0')}";
+    return "$minutos:${segundos.toString().padLeft(2, '0')}";
+  }
+
+  String getAverageParcialFormatado() {
+    if (_inicioSessao == null || distanciaTotal < 10) return "--:--";
+    final segundosTotais =
+        DateTime.now().difference(_inicioSessao!).inSeconds.toDouble();
+    final averagePor500m = (segundosTotais / distanciaTotal) * 500.0;
+    if (averagePor500m <= 0 || averagePor500m > 3600) return "--:--";
+    final minutos = (averagePor500m / 60).floor();
+    final segundos = (averagePor500m % 60).floor();
+    return "$minutos:${segundos.toString().padLeft(2, '0')}";
   }
 
   String getQualidadeGPS() {
@@ -214,6 +213,11 @@ class GPSController extends ChangeNotifier {
     return "Fraco (${precisao.toStringAsFixed(1)}m)";
   }
 
+  bool get sinalPerdido {
+    if (_ultimoUpdate == null) return false;
+    return DateTime.now().difference(_ultimoUpdate!).inSeconds > 5;
+  }
+
   double getVelocidadeKmh() => velocidadeAtual * 3.6;
 
   Future<void> pararTracking() async {
@@ -221,13 +225,14 @@ class GPSController extends ChangeNotifier {
     _posicaoSubscription = null;
     ultimaPosicao = null;
   }
-  
+
   void resetDados() {
     distanciaTotal = 0.0;
     distanciaUltimaRemada = 0.0;
     velocidadeAtual = 0.0;
     parcialPor500m = 0.0;
-    _emaVelocidade = 0.0;
+    _ema1 = 0.0;
+    _ema2 = 0.0;
     _emaInicializada = false;
     _inicioSessao = null;
     sessaoAtual.clear();
@@ -241,69 +246,77 @@ class GPSController extends ChangeNotifier {
     LocationPermission permissao = await Geolocator.checkPermission();
     if (permissao == LocationPermission.denied) {
       permissao = await Geolocator.requestPermission();
-      if (permissao == LocationPermission.denied) throw Exception('Permissão negada.');
+      if (permissao == LocationPermission.denied) {
+        throw Exception('Permissão negada.');
+      }
     }
-    return await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.bestForNavigation);
+    return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.bestForNavigation);
   }
 
-  // --- FUNÇÃO PARA EXPORTAR PARA STRAVA (TCX) ---
+  // --- EXPORTAR PARA STRAVA (TCX) ---
   Future<void> exportarTreinoTCX() async {
     debugPrint("🚣 EXPORT: sessaoAtual tem ${sessaoAtual.length} pontos");
     erro = '';
-    
+
     if (sessaoAtual.isEmpty) {
-      erro = "Sem dados GPS para exportar. Verifica se o GPS teve sinal durante o treino.";
+      erro =
+          "Sem dados GPS para exportar. Verifica se o GPS teve sinal durante o treino.";
       notifyListeners();
       return;
     }
 
     try {
       String tcx = '''<?xml version="1.0" encoding="UTF-8"?>
-  <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
-    <Activities>
-      <Activity Sport="Rowing">
-        <Id>${sessaoAtual.first.tempo.toUtc().toIso8601String()}</Id>
-        <Lap StartTime="${sessaoAtual.first.tempo.toUtc().toIso8601String()}">
-          <TotalTimeSeconds>${sessaoAtual.last.tempo.difference(sessaoAtual.first.tempo).inSeconds}</TotalTimeSeconds>
-          <DistanceMeters>${distanciaTotal.toStringAsFixed(1)}</DistanceMeters>
-          <Intensity>Active</Intensity>
-          <TriggerMethod>Manual</TriggerMethod>
-          <Track>''';
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Rowing">
+      <Id>${sessaoAtual.first.tempo.toUtc().toIso8601String()}</Id>
+      <Lap StartTime="${sessaoAtual.first.tempo.toUtc().toIso8601String()}">
+        <TotalTimeSeconds>${sessaoAtual.last.tempo.difference(sessaoAtual.first.tempo).inSeconds}</TotalTimeSeconds>
+        <DistanceMeters>${distanciaTotal.toStringAsFixed(1)}</DistanceMeters>
+        <Intensity>Active</Intensity>
+        <TriggerMethod>Manual</TriggerMethod>
+        <Track>''';
 
       for (var ponto in sessaoAtual) {
         tcx += '''
-            <Trackpoint>
-              <Time>${ponto.tempo.toUtc().toIso8601String()}</Time>
-              <Position>
-                <LatitudeDegrees>${ponto.lat}</LatitudeDegrees>
-                <LongitudeDegrees>${ponto.long}</LongitudeDegrees>
-              </Position>
-              <Cadence>${ponto.cadencia}</Cadence>
-              <Extensions>
-                <TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">
-                  <Speed>${ponto.velocidade}</Speed>
-                </TPX>
-              </Extensions>
-            </Trackpoint>''';
+          <Trackpoint>
+            <Time>${ponto.tempo.toUtc().toIso8601String()}</Time>
+            <Position>
+              <LatitudeDegrees>${ponto.lat}</LatitudeDegrees>
+              <LongitudeDegrees>${ponto.long}</LongitudeDegrees>
+            </Position>
+            <Cadence>${ponto.cadencia}</Cadence>
+            <Extensions>
+              <TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">
+                <Speed>${ponto.velocidade}</Speed>
+              </TPX>
+            </Extensions>
+          </Trackpoint>''';
       }
 
       tcx += '''
-          </Track>
-        </Lap>
-      </Activity>
-    </Activities>
-  </TrainingCenterDatabase>''';
+        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
 
       final directory = await getTemporaryDirectory();
-      final dataStr = DateTime.now().toIso8601String().replaceAll(':', '').split('.').first;
-      final file = File('${directory.path}/Treino_Rowing_$dataStr.tcx');
+      final dataStr = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '')
+          .split('.')
+          .first;
+      final file =
+          File('${directory.path}/Treino_Rowing_$dataStr.tcx');
       await file.writeAsString(tcx);
 
       await Share.shareXFiles(
         [XFile(file.path)],
         text: 'O meu treino de Remo!',
       );
-
     } catch (e) {
       erro = "Erro ao exportar: $e";
       notifyListeners();

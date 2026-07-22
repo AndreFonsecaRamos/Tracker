@@ -84,9 +84,9 @@ class CalibracaoMenu extends StatelessWidget {
           // O SLIDER PARA AJUSTAR
           Slider(
             value: analyzer.driveThreshold,
-            min: 0.1,
-            max: 1.5,
-            divisions: 14,
+            min: 0.05,
+            max: 0.8,
+            divisions: 15,
             label: analyzer.driveThreshold.toStringAsFixed(2),
             onChanged: (double value) {
               analyzer.updateThreshold(value);

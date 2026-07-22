@@ -1,4 +1,14 @@
 implementar:
+Resumo por prioridade
+Prioridade	Funcionalidade	Dificuldade
+🔴 Alta	Auto-pause	Fácil ✅
+🔴 Alta	Deteção perda de sinal	Fácil
+🟡 Média	Splits por 500m	Média
+🟡 Média	Persistência de treinos	Média
+🟡 Média	Calibração metros/remada	Média
+🟢 Avançado	Kalman Filter	Difícil
+
+ideias:
 curva de potencia
 ligar varios telemoveis
 apitos aos 250m, quando a serie começa e quando a serie acaba

@@ -52,6 +52,15 @@ class GPSController extends ChangeNotifier {
   // --- AVERAGE /500m ---
   DateTime? _inicioSessao;
 
+  bool emPausaAutomatica = false;
+  DateTime? _inicioVelocidadeBaixa;
+  static const int _milissegundosParaPausar = 3000;
+  static const double _velocidadeMinimaPausa = 0.5;
+
+  double tempoAtivoSegundos = 0.0; 
+  DateTime? _ultimoTickTempo;
+
+
   // --- LISTA PARA O STRAVA ---
   List<Pontodetreino> sessaoAtual = [];
 
@@ -133,6 +142,26 @@ class GPSController extends ChangeNotifier {
 
     // Barreira de segurança final (ninguém rema a mais de 7 m/s / 25 km/h)
     if (velocidadeInstantanea > 7.0) velocidadeInstantanea = 7.0;
+
+    if (velocidadeInstantanea < _velocidadeMinimaPausa) {
+      _inicioVelocidadeBaixa ??= DateTime.now();
+      
+      final millisParado = DateTime.now().difference(_inicioVelocidadeBaixa!).inMilliseconds;
+      
+      if (millisParado >= _milissegundosParaPausar && !emPausaAutomatica) {
+        emPausaAutomatica = true;
+        debugPrint("Auto-Pause Ativado");
+        notifyListeners();
+      }
+    } else {
+      _inicioVelocidadeBaixa = null;
+      if (emPausaAutomatica) {
+        emPausaAutomatica = false;
+        _ultimoTickTempo = novaPosicao.timestamp; // Para não contar o tempo que estivemos parados
+        debugPrint("Auto-Pause Desativado");
+        notifyListeners();
+      }
+    }
 
     // Acumula distância
     if (distancia > _distanciaMinima && distancia < 20.0) {
@@ -227,6 +256,7 @@ class GPSController extends ChangeNotifier {
   }
 
   void resetDados() {
+    _inicioVelocidadeBaixa = null;
     distanciaTotal = 0.0;
     distanciaUltimaRemada = 0.0;
     velocidadeAtual = 0.0;

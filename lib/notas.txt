@@ -1,7 +1,7 @@
 implementar:
 Resumo por prioridade
-Prioridade	Funcionalidade	Dificuldade
-🔴 Alta	Auto-pause	Fácil ✅
+Prioridade	Funcionalidade	Dificuldade ✅
+🔴 Alta	Auto-pause	Fácil
 🔴 Alta	Deteção perda de sinal	Fácil
 🟡 Média	Splits por 500m	Média
 🟡 Média	Persistência de treinos	Média

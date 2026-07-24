@@ -26,17 +26,16 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     startAnalysis();
   }
 
-  // --- SUAVIZAÇÃO DA MAGNITUDE ---
-  static const double _alphaFast = 0.15;
-  double _smoothMagnitude = 9.8;
+  static const double _alphaGravity = 0.05; // Muito lento, descobre o "Centro da Terra"
+  double _gx = 0.0, _gy = 0.0, _gz = 0.0;   // Vetor da Gravidade
 
-  static const double _alphaSlow = 0.01;
-  double _gravity = 9.8;
-
+  static const double _alphaFast = 0.15;    // Suaviza a força resultante
   double _dynamicAcceleration = 0.0;
 
   // --- LIMITES DE REMADA ---
   static const int _minStrokeInterval = 800;  // ms — mínimo entre remadas (~75 spm max)
+
+  // --- LIMITES DE REMADA ---
   static const int _maxStrokeInterval = 4000; // ms — máximo (~15 spm min)
 
   // --- DETEÇÃO DE PICO COM BASELINE DINÂMICA ---
@@ -91,10 +90,41 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     y = event.y;
     z = event.z;
 
-    final rawMagnitude = math.sqrt(x * x + y * y + z * z);
-    _smoothMagnitude = _smoothMagnitude + _alphaFast * (rawMagnitude - _smoothMagnitude);
-    _gravity = _gravity + _alphaSlow * (_smoothMagnitude - _gravity);
-    _dynamicAcceleration = _smoothMagnitude - _gravity;
+    // 1. Isolar o Vetor da Gravidade (Para onde é "baixo")
+    _gx = _alphaGravity * x + (1 - _alphaGravity) * _gx;
+    _gy = _alphaGravity * y + (1 - _alphaGravity) * _gy;
+    _gz = _alphaGravity * z + (1 - _alphaGravity) * _gz;
+
+    // 2. Descobrir a Força Dinâmica Pura (Sem a atração do planeta)
+    final double dx = x - _gx;
+    final double dy = y - _gy;
+    final double dz = z - _gz;
+
+    // 3. Projeção Vetorial: Cortar o eixo vertical (Ondas/Saltos)
+    final double gMag = math.sqrt(_gx * _gx + _gy * _gy + _gz * _gz);
+    
+    double horizontalMag = 0.0;
+    
+    if (gMag > 0.1) { // Previne divisão por zero
+      // Descobre o Vetor Unitário da Gravidade (aponta para baixo com força 1)
+      final double ugx = _gx / gMag;
+      final double ugy = _gy / gMag;
+      final double ugz = _gz / gMag;
+
+      // Produto Escalar (Dot Product): Quanta força foi gasta na vertical?
+      final double forcaVertical = (dx * ugx) + (dy * ugy) + (dz * ugz);
+
+      // Subtrai a força vertical ao movimento total. O que sobra é puro movimento HORIZONTAL.
+      final double hx = dx - (forcaVertical * ugx);
+      final double hy = dy - (forcaVertical * ugy);
+      final double hz = dz - (forcaVertical * ugz);
+
+      // A magnitude do movimento puramente horizontal (Aceleração do barco)
+      horizontalMag = math.sqrt(hx * hx + hy * hy + hz * hz);
+    }
+
+    // 4. Suavizar ligeiramente o resultado horizontal para ignorar trepidação mínima
+    _dynamicAcceleration = _alphaFast * horizontalMag + (1 - _alphaFast) * _dynamicAcceleration;
 
     _detectStroke();
   }
@@ -136,6 +166,8 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
       _picoAtual = 0.0;
     }
   }
+
+  double get magnitude => _dynamicAcceleration;
 
   void _registerStroke(DateTime strokeTime) {
     totalStrokes++;
@@ -193,8 +225,6 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     return _subindoPico ? "Puxada (Drive)" : "Deslize (Recovery)";
   }
 
-  double get magnitude => _dynamicAcceleration;
-
   void reset() {
     _intervalosMs.clear();
     isRecording = false;
@@ -205,9 +235,12 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     lastStrokeTime = null;
     lastStrokeInterval = null;
     strokeTimes.clear();
-    _smoothMagnitude = 9.8;
-    _gravity = 9.8;
+    
+    _gx = 0.0;
+    _gy = 0.0;
+    _gz = 0.0;
     _dynamicAcceleration = 0.0;
+    
     _janelaAceleracao.clear();
     _baselineDinamica = 0.0;
     _picoAtual = 0.0;

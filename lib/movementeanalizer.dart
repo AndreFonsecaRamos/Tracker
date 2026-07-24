@@ -19,6 +19,9 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
 
   bool isRecording = false;
 
+  final List<int> _intervalosMs = [];
+  static const int _tamanhoMediaIntervalos = 4;
+
   ImprovedMovementAnalyzer() {
     startAnalysis();
   }
@@ -38,7 +41,7 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
 
   // --- DETEÇÃO DE PICO COM BASELINE DINÂMICA ---
   final List<double> _janelaAceleracao = [];
-  static const int _tamanhoJanela = 8; // ~0.8 segundos de histórico
+  static const int _tamanhoJanela = 80; // ~0.8 segundos reais a 100Hz
 
   double _baselineDinamica = 0.0;
   double _picoAtual = 0.0;
@@ -76,6 +79,7 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   void stopRecording() {
     isRecording = false;
     strokesPerMinute = 0.0;
+    _intervalosMs.clear();
     notifyListeners();
   }
 
@@ -119,7 +123,7 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
         _subindoPico = true;
       }
     } else if (_subindoPico) {
-      // Passámos o pico e voltámos a descer — é uma remada!
+      // Passámos o pico e voltámos a descer — é uma remada
       _subindoPico = false;
 
       if (isRecording) {
@@ -153,19 +157,30 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   void _calculateStrokeRates() {
     if (lastStrokeInterval == null) return;
 
-    final double intervalSeconds = lastStrokeInterval!.inMilliseconds / 1000.0;
+    final int intervalMs = lastStrokeInterval!.inMilliseconds;
 
-    if (intervalSeconds >= _minStrokeInterval / 1000.0 &&
-        intervalSeconds <= _maxStrokeInterval / 1000.0) {
-      strokesPerMinute = 60.0 / intervalSeconds;
-
-      if (strokeTimes.length >= 2) {
-        final double totalTime =
-            strokeTimes.last.difference(strokeTimes.first).inMilliseconds / 1000.0;
-        averageStrokeRate = (strokeTimes.length - 1) * 60.0 / totalTime;
-      }
-    } else if (intervalSeconds > _maxStrokeInterval / 1000.0) {
+    //com um intervalo superior a 4s reseta a voga para poder arrancar em largada
+    if (intervalMs > _maxStrokeInterval) {
       strokesPerMinute = 0.0;
+      _intervalosMs.clear();
+      return;
+    }
+
+    // Guarda o intervalo na lista
+    _intervalosMs.add(intervalMs);
+    if (_intervalosMs.length > _tamanhoMediaIntervalos) {
+      _intervalosMs.removeAt(0);
+    }
+
+    // Calcula a voga como média dos últimos N intervalos
+    final double mediaMs = _intervalosMs.reduce((a, b) => a + b) / _intervalosMs.length;
+    strokesPerMinute = 60000.0 / mediaMs;
+
+    // Average geral da sessão
+    if (strokeTimes.length >= 2) {
+      final double totalTime =
+          strokeTimes.last.difference(strokeTimes.first).inMilliseconds / 1000.0;
+      averageStrokeRate = (strokeTimes.length - 1) * 60.0 / totalTime;
     }
   }
 
@@ -181,6 +196,7 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   double get magnitude => _dynamicAcceleration;
 
   void reset() {
+    _intervalosMs.clear();
     isRecording = false;
     totalStrokes = 0;
     strokesPerMinute = 0.0;

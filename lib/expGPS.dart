@@ -344,8 +344,9 @@ class GPSController extends ChangeNotifier {
       await file.writeAsString(tcx);
 
       await Share.shareXFiles(
-        [XFile(file.path)],
+        [XFile(file.path, mimeType: 'application/vnd.garmin.tcx+xml')], // <--- ADD MIME TYPE
         text: 'O meu treino de Remo!',
+        subject: 'Treino de Remo', // Sometimes helps on iOS
       );
     } catch (e) {
       erro = "Erro ao exportar: $e";

@@ -4,6 +4,20 @@ import 'package:flutter/material.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 class ImprovedMovementAnalyzer extends ChangeNotifier {
+
+  //para guardar os picos de voga regeitados
+  final List<String> logPicos = [];
+
+
+  //tentativa de duplo filtro com analize rapida e lenta para tirar possiveis interferencias
+
+  double _emaVoga1 = 0.0;
+  double _emaVoga2 = 0.0;
+  bool _emaVogaInicializada = false;
+
+  static const double _alphaVoga1 = 0.40; // Reativo — captura mudanças reais
+  static const double _alphaVoga2 = 0.35; // Suave — elimina saltos
+
   double x = 0, y = 0, z = 0;
   bool isWorking = false;
   String errorMessage = "";
@@ -26,16 +40,14 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     startAnalysis();
   }
 
-  static const double _alphaGravity = 0.05; // Muito lento, descobre o "Centro da Terra"
-  double _gx = 0.0, _gy = 0.0, _gz = 0.0;   // Vetor da Gravidade
-
-  static const double _alphaFast = 0.15;    // Suaviza a força resultante
+  // --- FILTRO DE GRAVIDADE E ACELERAÇÃO ---
+  double _gravity = 9.8;
+  bool _gravidadeInicializada = false;
+  static const double _alphaFast = 0.15; // Suaviza a força resultante
   double _dynamicAcceleration = 0.0;
 
   // --- LIMITES DE REMADA ---
   static const int _minStrokeInterval = 800;  // ms — mínimo entre remadas (~75 spm max)
-
-  // --- LIMITES DE REMADA ---
   static const int _maxStrokeInterval = 4000; // ms — máximo (~15 spm min)
 
   // --- DETEÇÃO DE PICO COM BASELINE DINÂMICA ---
@@ -45,10 +57,9 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   double _baselineDinamica = 0.0;
   double _picoAtual = 0.0;
   bool _subindoPico = false;
+  DateTime? _inicioPico; // Guarda a hora em que o pico começou
 
   // Threshold: quanto acima da baseline para contar como remada
-  // Valor baixo = deteta remadas suaves
-  // Valor alto = só deteta remadas fortes
   double driveThreshold = 0.20;
 
   StreamSubscription<AccelerometerEvent>? _subscription;
@@ -78,6 +89,9 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   void stopRecording() {
     isRecording = false;
     strokesPerMinute = 0.0;
+    _emaVoga1 = 0.0;
+    _emaVoga2 = 0.0;
+    _emaVogaInicializada = false;
     _intervalosMs.clear();
     notifyListeners();
   }
@@ -90,41 +104,22 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     y = event.y;
     z = event.z;
 
-    // 1. Isolar o Vetor da Gravidade (Para onde é "baixo")
-    _gx = _alphaGravity * x + (1 - _alphaGravity) * _gx;
-    _gy = _alphaGravity * y + (1 - _alphaGravity) * _gy;
-    _gz = _alphaGravity * z + (1 - _alphaGravity) * _gz;
+    final double rawMagnitude = math.sqrt(x * x + y * y + z * z);
 
-    // 2. Descobrir a Força Dinâmica Pura (Sem a atração do planeta)
-    final double dx = x - _gx;
-    final double dy = y - _gy;
-    final double dz = z - _gz;
-
-    // 3. Projeção Vetorial: Cortar o eixo vertical (Ondas/Saltos)
-    final double gMag = math.sqrt(_gx * _gx + _gy * _gy + _gz * _gz);
-    
-    double horizontalMag = 0.0;
-    
-    if (gMag > 0.1) { // Previne divisão por zero
-      // Descobre o Vetor Unitário da Gravidade (aponta para baixo com força 1)
-      final double ugx = _gx / gMag;
-      final double ugy = _gy / gMag;
-      final double ugz = _gz / gMag;
-
-      // Produto Escalar (Dot Product): Quanta força foi gasta na vertical?
-      final double forcaVertical = (dx * ugx) + (dy * ugy) + (dz * ugz);
-
-      // Subtrai a força vertical ao movimento total. O que sobra é puro movimento HORIZONTAL.
-      final double hx = dx - (forcaVertical * ugx);
-      final double hy = dy - (forcaVertical * ugy);
-      final double hz = dz - (forcaVertical * ugz);
-
-      // A magnitude do movimento puramente horizontal (Aceleração do barco)
-      horizontalMag = math.sqrt(hx * hx + hy * hy + hz * hz);
+    // Inicializa gravidade com primeiro ponto real
+    if (!_gravidadeInicializada) {
+      _gravity = rawMagnitude;
+      _gravidadeInicializada = true;
     }
 
-    // 4. Suavizar ligeiramente o resultado horizontal para ignorar trepidação mínima
-    _dynamicAcceleration = _alphaFast * horizontalMag + (1 - _alphaFast) * _dynamicAcceleration;
+    // Gravidade = média muito lenta da magnitude total
+    _gravity = 0.001 * rawMagnitude + 0.999 * _gravity;
+
+    // Aceleração dinâmica = diferença em relação à gravidade
+    final double dinamica = rawMagnitude - _gravity;
+
+    // Suavização leve
+    _dynamicAcceleration = _alphaFast * dinamica + (1 - _alphaFast) * _dynamicAcceleration;
 
     _detectStroke();
   }
@@ -143,33 +138,53 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     // Baseline dinâmica = média do ruído de fundo atual
     _baselineDinamica = _janelaAceleracao.reduce((a, b) => a + b) / _janelaAceleracao.length;
 
-    // O threshold adapta-se ao teu movimento — não é um valor absoluto
+    // O threshold adapta-se ao movimento (não é absoluto)
     final double thresholdAdaptativo = _baselineDinamica + driveThreshold;
 
     // Estamos a subir para um pico?
     if (_dynamicAcceleration > thresholdAdaptativo) {
-      if (_dynamicAcceleration > _picoAtual) {
-        _picoAtual = _dynamicAcceleration;
+      if (!_subindoPico) {
+        _inicioPico = now; // Marca o exato milissegundo em que a força começou
         _subindoPico = true;
       }
+      if (_dynamicAcceleration > _picoAtual) {
+        _picoAtual = _dynamicAcceleration;
+      }
     } else if (_subindoPico) {
-      // Passámos o pico e voltámos a descer — é uma remada
+      // Passámos o pico e descemos (acabou o drive)
       _subindoPico = false;
 
-      if (isRecording) {
-        if (lastStrokeTime == null ||
-            now.difference(lastStrokeTime!).inMilliseconds > _minStrokeInterval) {
-          _registerStroke(now);
-        }
-      }
+      // VALIDAÇÃO DA DURAÇÃO (O Segredo!)
+      // Remada real = 100ms a ~800ms. Pancada/Onda = < 80ms.
+      final int duracaoPicoMs = _inicioPico != null 
+          ? now.difference(_inicioPico!).inMilliseconds 
+          : 0;
 
+      if (duracaoPicoMs >= 100 && duracaoPicoMs <= 800) {
+        if (isRecording) {
+          if (lastStrokeTime == null ||
+              now.difference(lastStrokeTime!).inMilliseconds > _minStrokeInterval) {
+            _registerStroke(now);
+          }
+        }
+      } else {
+        final msg = "❌ ${duracaoPicoMs}ms rejeitado";
+        logPicos.add(msg);
+        if (logPicos.length > 300) logPicos.removeAt(0);
+      }
       _picoAtual = 0.0;
+      _inicioPico = null;
     }
   }
 
   double get magnitude => _dynamicAcceleration;
 
   void _registerStroke(DateTime strokeTime) {
+
+    final msg = "Remada #${totalStrokes + 1}";
+    logPicos.add(msg);
+    if (logPicos.length > 300) logPicos.removeAt(0);
+
     totalStrokes++;
 
     if (firstStrokeTime == null) firstStrokeTime = strokeTime;
@@ -191,9 +206,12 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
 
     final int intervalMs = lastStrokeInterval!.inMilliseconds;
 
-    //com um intervalo superior a 4s reseta a voga para poder arrancar em largada
+    // Se demorou mais de 4s, o barco esteve parado. Reseta para a largada!
     if (intervalMs > _maxStrokeInterval) {
       strokesPerMinute = 0.0;
+      _emaVoga1 = 0.0;
+      _emaVoga2 = 0.0;
+      _emaVogaInicializada = false;
       _intervalosMs.clear();
       return;
     }
@@ -204,9 +222,20 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
       _intervalosMs.removeAt(0);
     }
 
-    // Calcula a voga como média dos últimos N intervalos
+    // Calcula a voga como média dos últimos N intervalos (super estável no ecrã)
     final double mediaMs = _intervalosMs.reduce((a, b) => a + b) / _intervalosMs.length;
-    strokesPerMinute = 60000.0 / mediaMs;
+    final double vogaCalculada = 60000.0 / mediaMs;
+
+    if (!_emaVogaInicializada) {
+      _emaVoga1 = vogaCalculada;
+      _emaVoga2 = vogaCalculada;
+      _emaVogaInicializada = true;
+    } else {
+      _emaVoga1 = _alphaVoga1 * vogaCalculada + (1 - _alphaVoga1) * _emaVoga1;
+      _emaVoga2 = _alphaVoga2 * _emaVoga1 + (1 - _alphaVoga2) * _emaVoga2;
+    }
+
+    strokesPerMinute = _emaVoga2;
 
     // Average geral da sessão
     if (strokeTimes.length >= 2) {
@@ -236,15 +265,21 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     lastStrokeInterval = null;
     strokeTimes.clear();
     
-    _gx = 0.0;
-    _gy = 0.0;
-    _gz = 0.0;
+    _gravity = 9.8;
+    _gravidadeInicializada = false;
     _dynamicAcceleration = 0.0;
+
+    _emaVoga1 = 0.0;
+    _emaVoga2 = 0.0;
+    _emaVogaInicializada = false;
+
+    logPicos.clear();
     
     _janelaAceleracao.clear();
     _baselineDinamica = 0.0;
     _picoAtual = 0.0;
     _subindoPico = false;
+    _inicioPico = null;
     notifyListeners();
   }
 

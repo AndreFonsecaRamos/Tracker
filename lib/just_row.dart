@@ -272,10 +272,48 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
                       Text("Sinal GPS: ${gps.getQualidadeGPS()}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                       if (gps.velocidadeAtual > 0)
                         Text("Velocidade pura: ${gps.getVelocidadeKmh().toStringAsFixed(1)} km/h"),
-                      if (analyzer.errorMessage.isNotEmpty) 
+                      if (analyzer.errorMessage.isNotEmpty)
                         Text(analyzer.errorMessage, style: const TextStyle(color: Colors.red)),
-                      if (gps.erro.isNotEmpty) 
+                      if (gps.erro.isNotEmpty)
                         Text(gps.erro, style: const TextStyle(color: Colors.red)),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: () {
+                          final log = context.read<ImprovedMovementAnalyzer>().logPicos.join('\n');
+                          showDialog(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('Log de Picos'),
+                              content: SizedBox(
+                                width: double.maxFinite,
+                                height: 400,
+                                child: SingleChildScrollView(
+                                  reverse: true,
+                                  child: Text(
+                                    log.isEmpty ? 'Sem dados ainda.' : log,
+                                    style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                                  ),
+                                ),
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () {
+                                    context.read<ImprovedMovementAnalyzer>().logPicos.clear();
+                                    Navigator.pop(context);
+                                  },
+                                  child: const Text('Limpar'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Fechar'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.bug_report, size: 16),
+                        label: const Text('Ver log de picos'),
+                      ),
                     ],
                   ),
                 ),

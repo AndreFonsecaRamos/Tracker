@@ -5,18 +5,8 @@ import 'package:sensors_plus/sensors_plus.dart';
 
 class ImprovedMovementAnalyzer extends ChangeNotifier {
 
-  //para guardar os picos de voga regeitados
+  // Ferramenta de debug (opcional, pode ficar)
   final List<String> logPicos = [];
-
-
-  //tentativa de duplo filtro com analize rapida e lenta para tirar possiveis interferencias
-
-  double _emaVoga1 = 0.0;
-  double _emaVoga2 = 0.0;
-  bool _emaVogaInicializada = false;
-
-  static const double _alphaVoga1 = 0.40; // Reativo — captura mudanças reais
-  static const double _alphaVoga2 = 0.35; // Suave — elimina saltos
 
   double x = 0, y = 0, z = 0;
   bool isWorking = false;
@@ -34,33 +24,35 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   bool isRecording = false;
 
   final List<int> _intervalosMs = [];
-  static const int _tamanhoMediaIntervalos = 4;
+  static const int _tamanhoMediaIntervalos = 4; // Média das últimas 4 remadas
 
   ImprovedMovementAnalyzer() {
     startAnalysis();
   }
 
-  // --- FILTRO DE GRAVIDADE E ACELERAÇÃO ---
+  // --- FILTROS DE SINAL ---
+  // 1. Mata a vibração curta (ondas)
+  static const double _alphaSmooth = 0.10; 
+  double _smoothMagnitude = 9.8;
+
+  // 2. Isola a gravidade (Lento)
+  static const double _alphaGravity = 0.002; 
   double _gravity = 9.8;
   bool _gravidadeInicializada = false;
-  static const double _alphaFast = 0.15; // Suaviza a força resultante
+
   double _dynamicAcceleration = 0.0;
 
-  // --- LIMITES DE REMADA ---
-  static const int _minStrokeInterval = 800;  // ms — mínimo entre remadas (~75 spm max)
-  static const int _maxStrokeInterval = 4000; // ms — máximo (~15 spm min)
+  // --- GATILHO ANTI-ONDAS (HISTERESE) ---
+  // Para ser remada, tem de subir acima de +0.25
+  // Para a app voltar a escutar, tem de descer abaixo de -0.10
+  double driveThreshold = 0.25; 
+  static const double thresholdRecovery = -0.10; 
+  
+  bool _prontoParaRemar = true; // Estado do Gatilho
 
-  // --- DETEÇÃO DE PICO COM BASELINE DINÂMICA ---
-  final List<double> _janelaAceleracao = [];
-  static const int _tamanhoJanela = 80; // ~0.8 segundos reais a 100Hz
-
-  double _baselineDinamica = 0.0;
-  double _picoAtual = 0.0;
-  bool _subindoPico = false;
-  DateTime? _inicioPico; // Guarda a hora em que o pico começou
-
-  // Threshold: quanto acima da baseline para contar como remada
-  double driveThreshold = 0.20;
+  // --- LIMITES TEMPORAIS ---
+  static const int _minStrokeInterval = 800;  // Impossível remar a > 75 spm
+  static const int _maxStrokeInterval = 4000; // Parado (reset)
 
   StreamSubscription<AccelerometerEvent>? _subscription;
 
@@ -89,9 +81,6 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   void stopRecording() {
     isRecording = false;
     strokesPerMinute = 0.0;
-    _emaVoga1 = 0.0;
-    _emaVoga2 = 0.0;
-    _emaVogaInicializada = false;
     _intervalosMs.clear();
     notifyListeners();
   }
@@ -106,82 +95,52 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
 
     final double rawMagnitude = math.sqrt(x * x + y * y + z * z);
 
-    // Inicializa gravidade com primeiro ponto real
     if (!_gravidadeInicializada) {
+      _smoothMagnitude = rawMagnitude;
       _gravity = rawMagnitude;
       _gravidadeInicializada = true;
     }
 
-    // Gravidade = média muito lenta da magnitude total
-    _gravity = 0.001 * rawMagnitude + 0.999 * _gravity;
+    // 1. Suavizar impactos secos e ondas (Low-Pass Filter)
+    _smoothMagnitude = _alphaSmooth * rawMagnitude + (1 - _alphaSmooth) * _smoothMagnitude;
 
-    // Aceleração dinâmica = diferença em relação à gravidade
-    final double dinamica = rawMagnitude - _gravity;
+    // 2. Extrair a gravidade (Média super lenta)
+    _gravity = _alphaGravity * _smoothMagnitude + (1 - _alphaGravity) * _gravity;
 
-    // Suavização leve
-    _dynamicAcceleration = _alphaFast * dinamica + (1 - _alphaFast) * _dynamicAcceleration;
+    // 3. Obter a força pura do remador
+    _dynamicAcceleration = _smoothMagnitude - _gravity;
 
     _detectStroke();
   }
 
   void _detectStroke() {
-    final now = DateTime.now();
-
-    // Mantém a janela deslizante de histórico
-    _janelaAceleracao.add(_dynamicAcceleration);
-    if (_janelaAceleracao.length > _tamanhoJanela) {
-      _janelaAceleracao.removeAt(0);
-    }
-    // Espera que a janela esteja cheia antes de começar a detetar
-    if (_janelaAceleracao.length < _tamanhoJanela) return;
-
-    // Baseline dinâmica = média do ruído de fundo atual
-    _baselineDinamica = _janelaAceleracao.reduce((a, b) => a + b) / _janelaAceleracao.length;
-
-    // O threshold adapta-se ao movimento (não é absoluto)
-    final double thresholdAdaptativo = _baselineDinamica + driveThreshold;
-
-    // Estamos a subir para um pico?
-    if (_dynamicAcceleration > thresholdAdaptativo) {
-      if (!_subindoPico) {
-        _inicioPico = now; // Marca o exato milissegundo em que a força começou
-        _subindoPico = true;
-      }
-      if (_dynamicAcceleration > _picoAtual) {
-        _picoAtual = _dynamicAcceleration;
-      }
-    } else if (_subindoPico) {
-      // Passámos o pico e descemos (acabou o drive)
-      _subindoPico = false;
-
-      // VALIDAÇÃO DA DURAÇÃO (O Segredo!)
-      // Remada real = 100ms a ~800ms. Pancada/Onda = < 80ms.
-      final int duracaoPicoMs = _inicioPico != null 
-          ? now.difference(_inicioPico!).inMilliseconds 
-          : 0;
-
-      if (duracaoPicoMs >= 100 && duracaoPicoMs <= 800) {
-        if (isRecording) {
-          if (lastStrokeTime == null ||
-              now.difference(lastStrokeTime!).inMilliseconds > _minStrokeInterval) {
-            _registerStroke(now);
-          }
+    // A MAGIA DA HISTERESE: Ignora ruído e ondas
+    
+    // FASE 1: O barco acelera (O remador faz força)
+    if (_prontoParaRemar && _dynamicAcceleration > driveThreshold) {
+      _prontoParaRemar = false; // Bloqueia! Nenhuma onda vai contar como remada agora.
+      
+      final now = DateTime.now();
+      
+      if (isRecording) {
+        if (lastStrokeTime == null ||
+            now.difference(lastStrokeTime!).inMilliseconds > _minStrokeInterval) {
+          _registerStroke(now);
+        } else {
+           logPicos.add("Ignorado: Rápido demais");
         }
-      } else {
-        final msg = "❌ ${duracaoPicoMs}ms rejeitado";
-        logPicos.add(msg);
-        if (logPicos.length > 300) logPicos.removeAt(0);
       }
-      _picoAtual = 0.0;
-      _inicioPico = null;
+    } 
+    // FASE 2: O barco desliza e perde velocidade (O remador vem ao ataque)
+    else if (!_prontoParaRemar && _dynamicAcceleration < thresholdRecovery) {
+      _prontoParaRemar = true; // Rearmado! Pronto para a próxima remada.
     }
   }
 
   double get magnitude => _dynamicAcceleration;
 
   void _registerStroke(DateTime strokeTime) {
-
-    final msg = "Remada #${totalStrokes + 1}";
+    final msg = "Remada #${totalStrokes + 1} (${_dynamicAcceleration.toStringAsFixed(2)}g)";
     logPicos.add(msg);
     if (logPicos.length > 300) logPicos.removeAt(0);
 
@@ -209,9 +168,6 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     // Se demorou mais de 4s, o barco esteve parado. Reseta para a largada!
     if (intervalMs > _maxStrokeInterval) {
       strokesPerMinute = 0.0;
-      _emaVoga1 = 0.0;
-      _emaVoga2 = 0.0;
-      _emaVogaInicializada = false;
       _intervalosMs.clear();
       return;
     }
@@ -222,20 +178,10 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
       _intervalosMs.removeAt(0);
     }
 
-    // Calcula a voga como média dos últimos N intervalos (super estável no ecrã)
+    // A VOGA É APENAS A MÉDIA DOS ÚLTIMOS N INTERVALOS
+    // Removido o filtro duplo (EMA) para manter a reatividade da largada
     final double mediaMs = _intervalosMs.reduce((a, b) => a + b) / _intervalosMs.length;
-    final double vogaCalculada = 60000.0 / mediaMs;
-
-    if (!_emaVogaInicializada) {
-      _emaVoga1 = vogaCalculada;
-      _emaVoga2 = vogaCalculada;
-      _emaVogaInicializada = true;
-    } else {
-      _emaVoga1 = _alphaVoga1 * vogaCalculada + (1 - _alphaVoga1) * _emaVoga1;
-      _emaVoga2 = _alphaVoga2 * _emaVoga1 + (1 - _alphaVoga2) * _emaVoga2;
-    }
-
-    strokesPerMinute = _emaVoga2;
+    strokesPerMinute = 60000.0 / mediaMs;
 
     // Average geral da sessão
     if (strokeTimes.length >= 2) {
@@ -251,7 +197,7 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     if (lastStrokeTime != null && now.difference(lastStrokeTime!).inSeconds > 4) {
       return "Barco Parado";
     }
-    return _subindoPico ? "Puxada (Drive)" : "Deslize (Recovery)";
+    return !_prontoParaRemar ? "Puxada (Drive)" : "Deslize (Recovery)";
   }
 
   void reset() {
@@ -265,21 +211,14 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     lastStrokeInterval = null;
     strokeTimes.clear();
     
+    _smoothMagnitude = 9.8;
     _gravity = 9.8;
     _gravidadeInicializada = false;
     _dynamicAcceleration = 0.0;
 
-    _emaVoga1 = 0.0;
-    _emaVoga2 = 0.0;
-    _emaVogaInicializada = false;
-
     logPicos.clear();
     
-    _janelaAceleracao.clear();
-    _baselineDinamica = 0.0;
-    _picoAtual = 0.0;
-    _subindoPico = false;
-    _inicioPico = null;
+    _prontoParaRemar = true;
     notifyListeners();
   }
 

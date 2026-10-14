@@ -5,7 +5,6 @@ import 'movementeanalizer.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'dart:io' show Platform;
 
 // 1. CLASSE DE DADOS (Átomo)
 class Pontodetreino {
@@ -22,6 +21,14 @@ class Pontodetreino {
     required this.velocidade,
     required this.cadencia,
   });
+}
+
+class _GpsSample {
+  final DateTime timestamp;
+  final double distance;
+  final double speed;
+  final double timeDelta;
+  _GpsSample({required this.timestamp, required this.distance, required this.speed, required this.timeDelta});
 }
 
 class GPSController extends ChangeNotifier {
@@ -41,13 +48,16 @@ class GPSController extends ChangeNotifier {
   static const double _precisaoMinima = 15.0;
   static const double _distanciaMinima = 0.5;
 
-  // --- FILTRO DE DOIS ANDARES ---
+  // --- FILTRO DE JANELA DESLIZANTE & EMA ---
+  final List<_GpsSample> _gpsWindow = [];
+  static const int _windowDurationSeconds = 3;
+
   double _ema1 = 0.0;
   double _ema2 = 0.0;
   bool _emaInicializada = false;
 
-  static const double _alpha1 = 0.35; // Reativo — captura mudanças reais
-  static const double _alpha2 = 0.18; // Suave — elimina o ruído residual
+  static const double _alpha1 = 0.45; // Reativo — captura mudanças reais
+  static const double _alpha2 = 0.25; // Suave — elimina o ruído residual
 
   // --- AVERAGE /500m ---
   DateTime? _inicioSessao;
@@ -58,8 +68,6 @@ class GPSController extends ChangeNotifier {
   static const double _velocidadeMinimaPausa = 0.5;
 
   double tempoAtivoSegundos = 0.0; 
-  DateTime? _ultimoTickTempo;
-
 
   // --- LISTA PARA O STRAVA ---
   List<Pontodetreino> sessaoAtual = [];
@@ -121,6 +129,11 @@ class GPSController extends ChangeNotifier {
 
     if (tempoDecorrido <= 0) return;
 
+    // Outlier rejection: ignore impossible distance jumps (> 25m in 1s or speed > 7 m/s)
+    if (distancia > 25.0 || (distancia / tempoDecorrido) > 7.0) {
+      return;
+    }
+
     double velocidadeInstantanea = novaPosicao.speed;
 
     // Se o GPS reportar 0 mas nos movemos, calculamos à mão
@@ -128,20 +141,20 @@ class GPSController extends ChangeNotifier {
       velocidadeInstantanea = distancia / tempoDecorrido;
     }
 
-    // --- RATE OF CHANGE FILTER (escalado pelo tempo) ---
-    if (_emaInicializada) {
-      final double diferenca = velocidadeInstantanea - _ema1;
-      final double limite = 2.0 * tempoDecorrido;
-
-      if (diferenca > limite) {
-        velocidadeInstantanea = _ema1 + limite;
-      } else if (diferenca < -limite) {
-        velocidadeInstantanea = _ema1 - limite;
-      }
-    }
-
     // Barreira de segurança final (ninguém rema a mais de 7 m/s / 25 km/h)
     if (velocidadeInstantanea > 7.0) velocidadeInstantanea = 7.0;
+
+    // Adicionar à janela deslizante (Rolling Window)
+    final now = DateTime.now();
+    _gpsWindow.add(_GpsSample(
+      timestamp: now,
+      distance: distancia > _distanciaMinima ? distancia : 0.0,
+      speed: velocidadeInstantanea,
+      timeDelta: tempoDecorrido,
+    ));
+
+    // Remover amostras mais antigas que _windowDurationSeconds
+    _gpsWindow.removeWhere((sample) => now.difference(sample.timestamp).inSeconds > _windowDurationSeconds);
 
     if (velocidadeInstantanea < _velocidadeMinimaPausa) {
       _inicioVelocidadeBaixa ??= DateTime.now();
@@ -157,7 +170,6 @@ class GPSController extends ChangeNotifier {
       _inicioVelocidadeBaixa = null;
       if (emPausaAutomatica) {
         emPausaAutomatica = false;
-        _ultimoTickTempo = novaPosicao.timestamp; // Para não contar o tempo que estivemos parados
         debugPrint("Auto-Pause Desativado");
         notifyListeners();
       }
@@ -183,31 +195,43 @@ class GPSController extends ChangeNotifier {
       );
     }
 
-    _atualizarVelocidadeMedia(velocidadeInstantanea);
+    _atualizarVelocidadeMediaComJanela();
     notifyListeners();
   }
 
-  // --- FILTRO DE DOIS ANDARES ---
-  void _atualizarVelocidadeMedia(double novaVelocidade) {
-    if (!_emaInicializada) {
-      // Primeiro ponto: inicializa ambos os andares diretamente
-      _ema1 = novaVelocidade;
-      _ema2 = novaVelocidade;
-      _emaInicializada = true;
-    } else {
-      // Nos primeiros 10 segundos usa alpha mais alto para convergir rápido
-      final double alphaEfetivo1 = (_inicioSessao != null &&
-              DateTime.now().difference(_inicioSessao!).inSeconds < 10)
-          ? 0.50
-          : _alpha1;
-
-      _ema1 = alphaEfetivo1 * novaVelocidade + (1 - alphaEfetivo1) * _ema1;
-      _ema2 = _alpha2 * _ema1 + (1 - _alpha2) * _ema2;
+  // --- FILTRO DE JANELA DESLIZANTE & EMA ---
+  void _atualizarVelocidadeMediaComJanela() {
+    if (_gpsWindow.isEmpty) {
+      velocidadeAtual = 0.0;
+      parcialPor500m = 0.0;
+      return;
     }
 
-    velocidadeAtual = _ema2;
+    double totalDist = 0.0;
+    double totalTime = 0.0;
+    for (var sample in _gpsWindow) {
+      totalDist += sample.distance;
+      totalTime += sample.timeDelta;
+    }
 
-    if (velocidadeAtual > 0.8) {
+    if (totalTime > 0) {
+      double rollingSpeed = totalDist / totalTime;
+      if (rollingSpeed > 7.0) rollingSpeed = 7.0;
+
+      if (!_emaInicializada) {
+        _ema1 = rollingSpeed;
+        _ema2 = rollingSpeed;
+        _emaInicializada = true;
+      } else {
+        _ema1 = _alpha1 * rollingSpeed + (1 - _alpha1) * _ema1;
+        _ema2 = _alpha2 * _ema1 + (1 - _alpha2) * _ema2;
+      }
+      velocidadeAtual = _ema2;
+    } else {
+      velocidadeAtual = 0.0;
+    }
+
+    if (velocidadeAtual > 0.5) {
       parcialPor500m = 500.0 / velocidadeAtual;
     } else {
       parcialPor500m = 0.0;
@@ -265,6 +289,7 @@ class GPSController extends ChangeNotifier {
     _ema2 = 0.0;
     _emaInicializada = false;
     _inicioSessao = null;
+    _gpsWindow.clear();
     sessaoAtual.clear();
     notifyListeners();
   }
@@ -281,23 +306,23 @@ class GPSController extends ChangeNotifier {
       }
     }
     return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.bestForNavigation);
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.bestForNavigation));
   }
 
-  // --- EXPORTAR PARA STRAVA (TCX) ---
+  // --- EXPORTAR PARA STRAVA (TCX com StringBuffer) ---
   Future<void> exportarTreinoTCX() async {
     debugPrint("🚣 EXPORT: sessaoAtual tem ${sessaoAtual.length} pontos");
     erro = '';
 
     if (sessaoAtual.isEmpty) {
-      erro =
-          "Sem dados GPS para exportar. Verifica se o GPS teve sinal durante o treino.";
+      erro = "Sem dados GPS para exportar. Verifica se o GPS teve sinal durante o treino.";
       notifyListeners();
       return;
     }
 
     try {
-      String tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+      final buffer = StringBuffer();
+      buffer.write('''<?xml version="1.0" encoding="UTF-8"?>
 <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
   <Activities>
     <Activity Sport="Rowing">
@@ -307,10 +332,10 @@ class GPSController extends ChangeNotifier {
         <DistanceMeters>${distanciaTotal.toStringAsFixed(1)}</DistanceMeters>
         <Intensity>Active</Intensity>
         <TriggerMethod>Manual</TriggerMethod>
-        <Track>''';
+        <Track>''');
 
       for (var ponto in sessaoAtual) {
-        tcx += '''
+        buffer.write('''
           <Trackpoint>
             <Time>${ponto.tempo.toUtc().toIso8601String()}</Time>
             <Position>
@@ -323,15 +348,15 @@ class GPSController extends ChangeNotifier {
                 <Speed>${ponto.velocidade}</Speed>
               </TPX>
             </Extensions>
-          </Trackpoint>''';
+          </Trackpoint>''');
       }
 
-      tcx += '''
+      buffer.write('''
         </Track>
       </Lap>
     </Activity>
   </Activities>
-</TrainingCenterDatabase>''';
+</TrainingCenterDatabase>''');
 
       final directory = await getTemporaryDirectory();
       final dataStr = DateTime.now()
@@ -339,18 +364,24 @@ class GPSController extends ChangeNotifier {
           .replaceAll(':', '')
           .split('.')
           .first;
-      final file =
-          File('${directory.path}/Treino_Rowing_$dataStr.tcx');
-      await file.writeAsString(tcx);
+      final file = File('${directory.path}/Treino_Rowing_$dataStr.tcx');
+      await file.writeAsString(buffer.toString());
 
       await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'application/vnd.garmin.tcx+xml')], // <--- ADD MIME TYPE
+        [XFile(file.path, mimeType: 'application/vnd.garmin.tcx+xml')],
         text: 'O meu treino de Remo!',
-        subject: 'Treino de Remo', // Sometimes helps on iOS
+        subject: 'Treino de Remo',
       );
     } catch (e) {
       erro = "Erro ao exportar: $e";
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _posicaoSubscription?.cancel();
+    _posicaoSubscription = null;
+    super.dispose();
   }
 }

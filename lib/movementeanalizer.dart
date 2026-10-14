@@ -24,11 +24,9 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   bool isRecording = false;
 
   final List<int> _intervalosMs = [];
-  static const int _tamanhoMediaIntervalos = 4; // Média das últimas 4 remadas
+  static const int _tamanhoMediaIntervalos = 6; // Média das últimas 6 remadas
 
-  ImprovedMovementAnalyzer() {
-    startAnalysis();
-  }
+  ImprovedMovementAnalyzer();
 
   // --- FILTROS DE SINAL ---
   // 1. Mata a vibração curta (ondas)
@@ -43,21 +41,22 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   double _dynamicAcceleration = 0.0;
 
   // --- GATILHO ANTI-ONDAS (HISTERESE) ---
-  // Para ser remada, tem de subir acima de +0.25
-  // Para a app voltar a escutar, tem de descer abaixo de -0.10
-  double driveThreshold = 0.25; 
-  static const double thresholdRecovery = -0.10; 
+  double driveThreshold = 0.30; 
+  static const double thresholdRecovery = -0.12; 
   
   bool _prontoParaRemar = true; // Estado do Gatilho
 
   // --- LIMITES TEMPORAIS ---
-  static const int _minStrokeInterval = 800;  // Impossível remar a > 75 spm
-  static const int _maxStrokeInterval = 4000; // Parado (reset)
+  static const int _minStrokeInterval = 1250;  
+  static const int _maxStrokeInterval = 4000; 
 
   StreamSubscription<AccelerometerEvent>? _subscription;
+  Timer? _sensorCheckTimer;
 
   void startAnalysis() {
-    _subscription = accelerometerEvents.listen(
+    if (_subscription != null) return;
+
+    _subscription = accelerometerEventStream().listen(
       _processAccelerometerData,
       onError: (error) {
         errorMessage = "Erro no acelerómetro: $error";
@@ -66,8 +65,9 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
       },
     );
 
-    Timer(const Duration(seconds: 3), () {
-      if (!isWorking) {
+    _sensorCheckTimer?.cancel();
+    _sensorCheckTimer = Timer(const Duration(seconds: 3), () {
+      if (!isWorking && _subscription != null) {
         errorMessage = "Acelerómetro não detetado.";
         notifyListeners();
       }
@@ -76,12 +76,14 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
 
   void startRecording() {
     isRecording = true;
+    startAnalysis();
   }
 
   void stopRecording() {
     isRecording = false;
     strokesPerMinute = 0.0;
     _intervalosMs.clear();
+    stopAnalysis();
     notifyListeners();
   }
 
@@ -101,24 +103,16 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
       _gravidadeInicializada = true;
     }
 
-    // 1. Suavizar impactos secos e ondas (Low-Pass Filter)
     _smoothMagnitude = _alphaSmooth * rawMagnitude + (1 - _alphaSmooth) * _smoothMagnitude;
-
-    // 2. Extrair a gravidade (Média super lenta)
     _gravity = _alphaGravity * _smoothMagnitude + (1 - _alphaGravity) * _gravity;
-
-    // 3. Obter a força pura do remador
     _dynamicAcceleration = _smoothMagnitude - _gravity;
 
     _detectStroke();
   }
 
   void _detectStroke() {
-    // A MAGIA DA HISTERESE: Ignora ruído e ondas
-    
-    // FASE 1: O barco acelera (O remador faz força)
     if (_prontoParaRemar && _dynamicAcceleration > driveThreshold) {
-      _prontoParaRemar = false; // Bloqueia! Nenhuma onda vai contar como remada agora.
+      _prontoParaRemar = false; 
       
       final now = DateTime.now();
       
@@ -131,9 +125,8 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
         }
       }
     } 
-    // FASE 2: O barco desliza e perde velocidade (O remador vem ao ataque)
     else if (!_prontoParaRemar && _dynamicAcceleration < thresholdRecovery) {
-      _prontoParaRemar = true; // Rearmado! Pronto para a próxima remada.
+      _prontoParaRemar = true; 
     }
   }
 
@@ -165,25 +158,27 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
 
     final int intervalMs = lastStrokeInterval!.inMilliseconds;
 
-    // Se demorou mais de 4s, o barco esteve parado. Reseta para a largada!
     if (intervalMs > _maxStrokeInterval) {
       strokesPerMinute = 0.0;
       _intervalosMs.clear();
       return;
     }
 
-    // Guarda o intervalo na lista
     _intervalosMs.add(intervalMs);
     if (_intervalosMs.length > _tamanhoMediaIntervalos) {
       _intervalosMs.removeAt(0);
     }
 
-    // A VOGA É APENAS A MÉDIA DOS ÚLTIMOS N INTERVALOS
-    // Removido o filtro duplo (EMA) para manter a reatividade da largada
-    final double mediaMs = _intervalosMs.reduce((a, b) => a + b) / _intervalosMs.length;
+    final List<int> sortedIntervals = List.from(_intervalosMs)..sort();
+    double mediaMs;
+    if (sortedIntervals.length >= 5) {
+      final trimmed = sortedIntervals.sublist(1, sortedIntervals.length - 1);
+      mediaMs = trimmed.reduce((a, b) => a + b) / trimmed.length;
+    } else {
+      mediaMs = _intervalosMs.reduce((a, b) => a + b) / _intervalosMs.length;
+    }
     strokesPerMinute = 60000.0 / mediaMs;
 
-    // Average geral da sessão
     if (strokeTimes.length >= 2) {
       final double totalTime =
           strokeTimes.last.difference(strokeTimes.first).inMilliseconds / 1000.0;
@@ -223,8 +218,11 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   }
 
   void stopAnalysis() {
+    _sensorCheckTimer?.cancel();
+    _sensorCheckTimer = null;
     _subscription?.cancel();
     _subscription = null;
+    isWorking = false;
   }
 
   void updateThreshold(double newValue) {

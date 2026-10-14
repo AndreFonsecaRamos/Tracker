@@ -38,7 +38,7 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      if (_horaQueComecou != null) {
+      if (_horaQueComecou != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Treino em pausa (App em segundo plano)')),
         );
@@ -63,7 +63,6 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
     if (_timer != null && _timer!.isActive) return;
 
     _horaQueComecou = DateTime.now();
-    // ABRIR O CADEADO DO ACELERÓMETRO
     context.read<ImprovedMovementAnalyzer>().startRecording();
 
     _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
@@ -80,11 +79,11 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
   void _startWork() async {
     if (_timer != null && _timer!.isActive) return; 
     final analyzer = context.read<ImprovedMovementAnalyzer>();
-
     final gps = context.read<GPSController>();
     
     try {
       await gps.getPermissao();
+      if (!mounted) return;
       gps.iniciarTracking(analyzer);
 
       if (comeco > 0) {
@@ -99,7 +98,6 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
           } else {
             timer.cancel();
             setState(() { comeco = 0; });
-            // LIMPAR DADOS SUJOS DO GPS DURANTE A CONTAGEM
             gps.resetDados(); 
             _startTimer();
           }
@@ -108,12 +106,12 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
         _startTimer();
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro GPS: $e')));
     }
   }
 
   void _stopTimer() {
-    // AVISAR O ECRÃ PARA ATUALIZAR (Mostrar o botão)
     setState(() { 
       if (_horaQueComecou != null) {
         _tempoAcumuladoAntesDaPausa += DateTime.now().difference(_horaQueComecou!);
@@ -137,8 +135,7 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final gps = context.watch<GPSController>();
-    final analyzer = context.watch<ImprovedMovementAnalyzer>();
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
 
     final minutos = _tempoAtual.inMinutes;
     final segundos = _tempoAtual.inSeconds % 60;
@@ -146,17 +143,21 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
         ? comeco.toString() 
         : "${minutos.toString().padLeft(2, '0')}:${segundos.toString().padLeft(2, '0')}";
 
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
-
     if (isLandscape) {
       return Scaffold(
         body: SafeArea(
-          child: PM5Monitor(
-            tempo: stringTempo,
-            spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
-            parcial: gps.getParcialFormatado(),
-            distancia: gps.distanciaTotal.toStringAsFixed(0),
-            averageParcial: gps.getAverageParcialFormatado(),
+          child: Row(
+            children: [
+              Expanded(
+                child: PM5Monitor(
+                  tempo: stringTempo,
+                  spm: context.select<ImprovedMovementAnalyzer, String>((a) => a.strokesPerMinute > 0 ? a.strokesPerMinute.toStringAsFixed(0) : "0"),
+                  parcial: context.select<GPSController, String>((g) => g.getParcialFormatado()),
+                  distancia: context.select<GPSController, String>((g) => g.distanciaTotal.toStringAsFixed(0)),
+                  averageParcial: context.select<GPSController, String>((g) => g.getAverageParcialFormatado()),
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -211,25 +212,37 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
               mainAxisSpacing: 12,
               childAspectRatio: 1.2, 
               children: [
-                StatCard(
-                  title: "Parcial 500m",
-                  value: gps.getParcialFormatado(),
-                  baseColor: Colors.blue,
+                Selector<GPSController, String>(
+                  selector: (_, gps) => gps.getParcialFormatado(),
+                  builder: (_, parcial, __) => StatCard(
+                    title: "Parcial 500m",
+                    value: parcial,
+                    baseColor: Colors.blue,
+                  ),
                 ),
-                StatCard(
-                  title: "Voga Atual",
-                  value: analyzer.strokesPerMinute.toStringAsFixed(1),
-                  baseColor: Colors.green,
+                Selector<ImprovedMovementAnalyzer, String>(
+                  selector: (_, analyzer) => analyzer.strokesPerMinute.toStringAsFixed(1),
+                  builder: (_, spm, __) => StatCard(
+                    title: "Voga Atual",
+                    value: spm,
+                    baseColor: Colors.green,
+                  ),
                 ),
-                StatCard(
-                  title: "Distância",
-                  value: "${gps.distanciaTotal.toStringAsFixed(0)}m",
-                  baseColor: Colors.orange,
+                Selector<GPSController, String>(
+                  selector: (_, gps) => "${gps.distanciaTotal.toStringAsFixed(0)}m",
+                  builder: (_, distancia, __) => StatCard(
+                    title: "Distância",
+                    value: distancia,
+                    baseColor: Colors.orange,
+                  ),
                 ),
-                StatCard(
-                  title: "Remadas",
-                  value: "${analyzer.totalStrokes}",
-                  baseColor: Colors.purple,
+                Selector<ImprovedMovementAnalyzer, int>(
+                  selector: (_, analyzer) => analyzer.totalStrokes,
+                  builder: (_, strokes, __) => StatCard(
+                    title: "Remadas",
+                    value: "$strokes",
+                    baseColor: Colors.purple,
+                  ),
                 ),
               ],
             ),
@@ -241,21 +254,29 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
                 color: Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Column(
-                children: [
-                  Text(
-                    analyzer.getMovementStatus(),
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  if (analyzer.lastStrokeInterval != null) ...[
-                    const SizedBox(height: 4),
+              child: Selector<ImprovedMovementAnalyzer, String>(
+                selector: (_, a) => a.getMovementStatus(),
+                builder: (_, status, __) => Column(
+                  children: [
                     Text(
-                      "Último intervalo: ${(analyzer.lastStrokeInterval!.inMilliseconds / 1000).toStringAsFixed(1)}s",
-                      style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                      status,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                    Consumer<ImprovedMovementAnalyzer>(
+                      builder: (_, analyzer, __) {
+                        if (analyzer.lastStrokeInterval == null) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            "Último intervalo: ${(analyzer.lastStrokeInterval!.inMilliseconds / 1000).toStringAsFixed(1)}s",
+                            style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                          ),
+                        );
+                      },
                     ),
                   ],
-                ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -266,16 +287,34 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
                   padding: const EdgeInsets.all(8.0),
                   child: Column(
                     children: [
-                      Text("Aceleração: ${analyzer.magnitude.toStringAsFixed(1)} m/s²"),
-                      Text("X: ${analyzer.x.toStringAsFixed(1)} | Y: ${analyzer.y.toStringAsFixed(1)} | Z: ${analyzer.z.toStringAsFixed(1)}", style: const TextStyle(fontFamily: 'monospace')),
+                      Consumer<ImprovedMovementAnalyzer>(
+                        builder: (_, analyzer, __) => Text("Aceleração: ${analyzer.magnitude.toStringAsFixed(1)} m/s²"),
+                      ),
+                      Consumer<ImprovedMovementAnalyzer>(
+                        builder: (_, analyzer, __) => Text("X: ${analyzer.x.toStringAsFixed(1)} | Y: ${analyzer.y.toStringAsFixed(1)} | Z: ${analyzer.z.toStringAsFixed(1)}", style: const TextStyle(fontFamily: 'monospace')),
+                      ),
                       const Divider(),
-                      Text("Sinal GPS: ${gps.getQualidadeGPS()}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                      if (gps.velocidadeAtual > 0)
-                        Text("Velocidade pura: ${gps.getVelocidadeKmh().toStringAsFixed(1)} km/h"),
-                      if (analyzer.errorMessage.isNotEmpty)
-                        Text(analyzer.errorMessage, style: const TextStyle(color: Colors.red)),
-                      if (gps.erro.isNotEmpty)
-                        Text(gps.erro, style: const TextStyle(color: Colors.red)),
+                      Consumer<GPSController>(
+                        builder: (_, gps, __) => Text("Sinal GPS: ${gps.getQualidadeGPS()}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                      ),
+                      Consumer<GPSController>(
+                        builder: (_, gps, __) {
+                          if (gps.velocidadeAtual <= 0) return const SizedBox.shrink();
+                          return Text("Velocidade pura: ${gps.getVelocidadeKmh().toStringAsFixed(1)} km/h");
+                        },
+                      ),
+                      Consumer<ImprovedMovementAnalyzer>(
+                        builder: (_, analyzer, __) {
+                          if (analyzer.errorMessage.isEmpty) return const SizedBox.shrink();
+                          return Text(analyzer.errorMessage, style: const TextStyle(color: Colors.red));
+                        },
+                      ),
+                      Consumer<GPSController>(
+                        builder: (_, gps, __) {
+                          if (gps.erro.isEmpty) return const SizedBox.shrink();
+                          return Text(gps.erro, style: const TextStyle(color: Colors.red));
+                        },
+                      ),
                       const SizedBox(height: 8),
                       TextButton.icon(
                         onPressed: () {
@@ -354,7 +393,6 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
                 
                 await gps.exportarTreinoTCX();
                 
-                // Se houve erro, mostra ao utilizador
                 if (gps.erro.isNotEmpty && context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(

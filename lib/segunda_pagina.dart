@@ -52,7 +52,7 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      if (_horaUltimoResume != null) {
+      if (_horaUltimoResume != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Treino em pausa (App em segundo plano)')),
         );
@@ -128,6 +128,7 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
     
     try {
       await gps.getPermissao();
+      if (!mounted) return;
       gps.iniciarTracking(analyzer);
 
       if (comeco > 0) {
@@ -150,12 +151,12 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
         _startTimer();
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro GPS: $e')));
     }
   }
 
   void _stopTimer() {
-    // AVISAR O ECRÃ PARA ATUALIZAR (Mostrar o botão)
     setState(() {
       if (_horaUltimoResume != null) {
         _tempoRestanteFase = _tempoRestanteFase - DateTime.now().difference(_horaUltimoResume!);
@@ -205,7 +206,6 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
                 
                 await gps.exportarTreinoTCX();
                 
-                // Se houve erro, mostra ao utilizador
                 if (gps.erro.isNotEmpty && context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -232,9 +232,6 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
-    final gps = context.watch<GPSController>();
-    final analyzer = context.watch<ImprovedMovementAnalyzer>();
-
     final minutos = _tempoAtual.inMinutes;
     final segundos = _tempoAtual.inSeconds % 60;
     final stringTempo = comeco > 0 
@@ -246,13 +243,17 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
     if (isLandscape) {
       return Scaffold(
         body: SafeArea(
-          child: PM5Monitor(
-            tempo: stringTempo,
-            spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
-            parcial: gps.getParcialFormatado(),
-            distancia: gps.distanciaTotal.toStringAsFixed(0),
-            serieAtual: _serieAtual, 
-            averageParcial: gps.getAverageParcialFormatado(),
+          child: Consumer2<GPSController, ImprovedMovementAnalyzer>(
+            builder: (context, gps, analyzer, child) {
+              return PM5Monitor(
+                tempo: stringTempo,
+                spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
+                parcial: gps.getParcialFormatado(),
+                distancia: gps.distanciaTotal.toStringAsFixed(0),
+                serieAtual: _serieAtual, 
+                averageParcial: gps.getAverageParcialFormatado(),
+              );
+            },
           ),
         ),
       );
@@ -323,25 +324,37 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
               mainAxisSpacing: 12,
               childAspectRatio: 1.2, 
               children: [
-                StatCard(
-                  title: "Parcial 500m",
-                  value: gps.getParcialFormatado(),
-                  baseColor: Colors.blue,
+                Selector<GPSController, String>(
+                  selector: (_, g) => g.getParcialFormatado(),
+                  builder: (_, value, __) => StatCard(
+                    title: "Parcial 500m",
+                    value: value,
+                    baseColor: Colors.blue,
+                  ),
                 ),
-                StatCard(
-                  title: "Voga Atual",
-                  value: "${analyzer.strokesPerMinute.toStringAsFixed(1)}",
-                  baseColor: Colors.green,
+                Selector<ImprovedMovementAnalyzer, double>(
+                  selector: (_, a) => a.strokesPerMinute,
+                  builder: (_, value, __) => StatCard(
+                    title: "Voga Atual",
+                    value: value.toStringAsFixed(1),
+                    baseColor: Colors.green,
+                  ),
                 ),
-                StatCard(
-                  title: "Distância",
-                  value: "${gps.distanciaTotal.toStringAsFixed(0)}m",
-                  baseColor: Colors.orange,
+                Selector<GPSController, String>(
+                  selector: (_, g) => "${g.distanciaTotal.toStringAsFixed(0)}m",
+                  builder: (_, value, __) => StatCard(
+                    title: "Distância",
+                    value: value,
+                    baseColor: Colors.orange,
+                  ),
                 ),
-                StatCard(
-                  title: "Remadas",
-                  value: "${analyzer.totalStrokes}",
-                  baseColor: Colors.purple,
+                Selector<ImprovedMovementAnalyzer, int>(
+                  selector: (_, a) => a.totalStrokes,
+                  builder: (_, value, __) => StatCard(
+                    title: "Remadas",
+                    value: "$value",
+                    baseColor: Colors.purple,
+                  ),
                 ),
               ],
             ),
@@ -353,10 +366,13 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
                 color: Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(
-                analyzer.getMovementStatus(),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
+              child: Selector<ImprovedMovementAnalyzer, String>(
+                selector: (_, a) => a.getMovementStatus(),
+                builder: (_, status, __) => Text(
+                  status,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
           ],

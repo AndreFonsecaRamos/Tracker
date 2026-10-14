@@ -205,6 +205,12 @@ class _IntervaloDistanciaMenuState extends State<IntervaloDistanciaMenu> {
   Duration _tempoIntervalo = Duration.zero;
 
   @override
+  void dispose() {
+    _distanciaController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     // 1. SingleChildScrollView adicionado aqui também.
     return SingleChildScrollView(
@@ -261,6 +267,13 @@ class DurationFormField extends StatefulWidget {
 class _DurationFormFieldState extends State<DurationFormField> {
   final _min = TextEditingController();
   final _sec = TextEditingController();
+
+  @override
+  void dispose() {
+    _min.dispose();
+    _sec.dispose();
+    super.dispose();
+  }
 
   void _update() {
     final m = int.tryParse(_min.text) ?? 0;

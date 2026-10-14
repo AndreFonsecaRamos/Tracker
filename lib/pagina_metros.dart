@@ -135,6 +135,7 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
 
     try {
       await gps.getPermissao();
+      if (!mounted) return;
       gps.iniciarTracking(analyzer);
 
       if (comeco > 0) {
@@ -187,7 +188,6 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
   // --- JANELA DE FIM E EXPORTAÇÃO ---
   void _showCompletionDialog() {
     final analyzer = context.read<ImprovedMovementAnalyzer>();
-    final gps = context.read<GPSController>();
 
     showDialog(
       context: context,
@@ -239,11 +239,6 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
-    final gps = context.watch<GPSController>();
-    final analyzer = context.watch<ImprovedMovementAnalyzer>();
-
-    double metrosRestantes = math.max(0, widget.metros - gps.distanciaTotal);
-    
     final minutos = _tempoAtual.inMinutes;
     final segundos = _tempoAtual.inSeconds % 60;
     final stringTempo = comeco > 0 
@@ -255,13 +250,18 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
     if (isLandscape) {
       return Scaffold(
         body: SafeArea(
-          child: PM5Monitor(
-            tempo: stringTempo,
-            spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
-            parcial: gps.getParcialFormatado(),
-            distancia: metrosRestantes.toStringAsFixed(0),
-            serieAtual: _serieAtual, 
-            averageParcial: gps.getAverageParcialFormatado(),
+          child: Consumer2<GPSController, ImprovedMovementAnalyzer>(
+            builder: (context, gps, analyzer, child) {
+              double metrosRestantes = math.max(0, widget.metros - gps.distanciaTotal);
+              return PM5Monitor(
+                tempo: stringTempo,
+                spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
+                parcial: gps.getParcialFormatado(),
+                distancia: metrosRestantes.toStringAsFixed(0),
+                serieAtual: _serieAtual, 
+                averageParcial: gps.getAverageParcialFormatado(),
+              );
+            },
           ),
         ),
       );
@@ -312,14 +312,20 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey),
               ),
-              Text(
-                metrosRestantes.toStringAsFixed(0),
-                style: const TextStyle(
-                  fontSize: 72, 
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange,
-                ),
-                textAlign: TextAlign.center,
+              Selector<GPSController, double>(
+                selector: (_, g) => g.distanciaTotal,
+                builder: (_, distanciaTotal, __) {
+                  double metrosRestantes = math.max(0, widget.metros - distanciaTotal);
+                  return Text(
+                    metrosRestantes.toStringAsFixed(0),
+                    style: const TextStyle(
+                      fontSize: 72, 
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange,
+                    ),
+                    textAlign: TextAlign.center,
+                  );
+                },
               ),
             ],
             const SizedBox(height: 20),
@@ -351,25 +357,34 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
               mainAxisSpacing: 12,
               childAspectRatio: 1.2, 
               children: [
-                StatCard(
-                  title: "Parcial 500m",
-                  value: gps.getParcialFormatado(),
-                  baseColor: Colors.blue,
+                Selector<GPSController, String>(
+                  selector: (_, g) => g.getParcialFormatado(),
+                  builder: (_, value, __) => StatCard(
+                    title: "Parcial 500m",
+                    value: value,
+                    baseColor: Colors.blue,
+                  ),
                 ),
-                StatCard(
-                  title: "Voga Atual",
-                  value: "${analyzer.strokesPerMinute.toStringAsFixed(1)}",
-                  baseColor: Colors.green,
+                Selector<ImprovedMovementAnalyzer, double>(
+                  selector: (_, a) => a.strokesPerMinute,
+                  builder: (_, value, __) => StatCard(
+                    title: "Voga Atual",
+                    value: value.toStringAsFixed(1),
+                    baseColor: Colors.green,
+                  ),
                 ),
                 StatCard(
                   title: "Tempo",
                   value: stringTempo, 
                   baseColor: Colors.purple,
                 ),
-                StatCard(
-                  title: "Remadas",
-                  value: "${analyzer.totalStrokes}",
-                  baseColor: Colors.teal,
+                Selector<ImprovedMovementAnalyzer, int>(
+                  selector: (_, a) => a.totalStrokes,
+                  builder: (_, value, __) => StatCard(
+                    title: "Remadas",
+                    value: "$value",
+                    baseColor: Colors.teal,
+                  ),
                 ),
               ],
             ),
@@ -381,10 +396,13 @@ class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver
                 color: Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(
-                analyzer.getMovementStatus(),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
+              child: Selector<ImprovedMovementAnalyzer, String>(
+                selector: (_, a) => a.getMovementStatus(),
+                builder: (_, status, __) => Text(
+                  status,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
           ],

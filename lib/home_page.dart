@@ -4,6 +4,8 @@ import 'segunda_pagina.dart';
 import 'pagina_metros.dart';
 import 'just_row.dart';
 import 'movementeanalizer.dart';
+import 'heart_rate_controller.dart';
+import 'custom_widgets.dart';
 import 'package:provider/provider.dart';
 
 class MyHomePage extends StatefulWidget {
@@ -99,6 +101,62 @@ class CalibracaoMenu extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
+          
+          const SizedBox(height: 50),
+          const Divider(),
+          const SizedBox(height: 20),
+          
+          // CONEXÃO BANDA CARDÍACA
+          const Text("CONEXÃO BANDA CARDÍACA", 
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          const SizedBox(height: 20),
+          
+          Consumer<HeartRateController>(
+            builder: (context, hr, child) {
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: hr.isConnected ? Colors.red.withOpacity(0.05) : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: hr.isConnected ? Colors.red.withOpacity(0.3) : Colors.grey.withOpacity(0.3)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          hr.isConnected ? Icons.favorite : Icons.favorite_border,
+                          color: hr.isConnected ? Colors.red : Colors.grey,
+                          size: 32,
+                        ),
+                        const SizedBox(width: 15),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                hr.isConnected ? hr.connectedDeviceName : "Nenhuma banda ligada",
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              Text(
+                                hr.isConnected ? "${hr.heartRate} BPM" : "Bluetooth Low Energy",
+                                style: TextStyle(color: hr.isConnected ? Colors.red : Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => showBluetoothDialog(context),
+                          child: Text(hr.isConnected ? "Mudar" : "Ligar"),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 40),
         ],
       ),
     );

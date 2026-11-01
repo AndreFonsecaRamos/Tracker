@@ -6,6 +6,10 @@
 		<string>Este app precisa de acesso ao GPS para medir velocidade e distância.</string>
 		<key>NSLocationAlwaysUsageDescription</key>
 		<string>Este app precisa de acesso ao GPS mesmo em background.</string>
+		<key>NSBluetoothAlwaysUsageDescription</key>
+		<string>Este app precisa de Bluetooth para ligar a bandas cardíacas.</string>
+		<key>NSBluetoothPeripheralUsageDescription</key>
+		<string>Este app precisa de Bluetooth para ligar a sensores de frequência cardíaca.</string>
 		<key>CFBundleDevelopmentRegion</key>
 		<string>$(DEVELOPMENT_LANGUAGE)</string>
 		<key>CFBundleDisplayName</key>

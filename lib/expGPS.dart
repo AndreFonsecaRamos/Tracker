@@ -6,6 +6,8 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'heart_rate_controller.dart';
+
 // 1. CLASSE DE DADOS (Átomo)
 class Pontodetreino {
   final DateTime tempo;
@@ -13,6 +15,7 @@ class Pontodetreino {
   final double long;
   final double velocidade;
   final int cadencia;
+  final int frequenciaCardiaca;
 
   Pontodetreino({
     required this.tempo,
@@ -20,6 +23,7 @@ class Pontodetreino {
     required this.long,
     required this.velocidade,
     required this.cadencia,
+    required this.frequenciaCardiaca,
   });
 }
 
@@ -50,14 +54,14 @@ class GPSController extends ChangeNotifier {
 
   // --- FILTRO DE JANELA DESLIZANTE & EMA ---
   final List<_GpsSample> _gpsWindow = [];
-  static const int _windowDurationSeconds = 3;
+  static const int _windowDurationSeconds = 2;
 
   double _ema1 = 0.0;
   double _ema2 = 0.0;
   bool _emaInicializada = false;
 
-  static const double _alpha1 = 0.45; // Reativo — captura mudanças reais
-  static const double _alpha2 = 0.25; // Suave — elimina o ruído residual
+  static const double _alpha1 = 0.55; // Mais reativo à aceleração
+  static const double _alpha2 = 0.35; // Mais ágil na descida do parcial
 
   // --- AVERAGE /500m ---
   DateTime? _inicioSessao;
@@ -73,7 +77,7 @@ class GPSController extends ChangeNotifier {
   List<Pontodetreino> sessaoAtual = [];
 
   // 2. MÉTODO PARA LIGAR O TRACKING
-  void iniciarTracking(ImprovedMovementAnalyzer analyzer) {
+  void iniciarTracking(ImprovedMovementAnalyzer analyzer, {HeartRateController? hrController}) {
     LocationSettings settings;
 
     if (Platform.isAndroid) {
@@ -102,7 +106,8 @@ class GPSController extends ChangeNotifier {
         long = pos.longitude;
 
         if (ultimaPosicao != null) {
-          _processarPonto(pos, analyzer.strokesPerMinute.round(), analyzer.isRecording);
+          final currentHr = hrController?.heartRate ?? 0;
+          _processarPonto(pos, analyzer.strokesPerMinute.round(), currentHr, analyzer.isRecording);
         }
 
         ultimaPosicao = pos;
@@ -117,7 +122,7 @@ class GPSController extends ChangeNotifier {
   }
 
   // 3. MÉTODO DE CÁLCULO E REGISTO
-  void _processarPonto(Position novaPosicao, int voga, bool gravando) {
+  void _processarPonto(Position novaPosicao, int voga, int heartRate, bool gravando) {
     final distancia = Geolocator.distanceBetween(
       ultimaPosicao!.latitude, ultimaPosicao!.longitude,
       novaPosicao.latitude, novaPosicao.longitude,
@@ -191,6 +196,7 @@ class GPSController extends ChangeNotifier {
           long: novaPosicao.longitude,
           velocidade: velocidadeInstantanea,
           cadencia: voga,
+          frequenciaCardiaca: heartRate,
         ),
       );
     }
@@ -341,7 +347,14 @@ class GPSController extends ChangeNotifier {
             <Position>
               <LatitudeDegrees>${ponto.lat}</LatitudeDegrees>
               <LongitudeDegrees>${ponto.long}</LongitudeDegrees>
-            </Position>
+            </Position>''');
+        if (ponto.frequenciaCardiaca > 0) {
+          buffer.write('''
+            <HeartRateBpm>
+              <Value>${ponto.frequenciaCardiaca}</Value>
+            </HeartRateBpm>''');
+        }
+        buffer.write('''
             <Cadence>${ponto.cadencia}</Cadence>
             <Extensions>
               <TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">

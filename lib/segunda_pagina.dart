@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'expGPS.dart';
 import 'movementeanalizer.dart';
+import 'heart_rate_controller.dart';
 import 'custom_widgets.dart';
 
 class SegundaPagina extends StatefulWidget {
@@ -125,11 +126,12 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
 
     final gps = context.read<GPSController>();
     final analyzer = context.read<ImprovedMovementAnalyzer>();
+    final hr = context.read<HeartRateController>();
     
     try {
       await gps.getPermissao();
       if (!mounted) return;
-      gps.iniciarTracking(analyzer);
+      gps.iniciarTracking(analyzer, hrController: hr);
 
       if (comeco > 0) {
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -243,8 +245,8 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
     if (isLandscape) {
       return Scaffold(
         body: SafeArea(
-          child: Consumer2<GPSController, ImprovedMovementAnalyzer>(
-            builder: (context, gps, analyzer, child) {
+          child: Consumer3<GPSController, ImprovedMovementAnalyzer, HeartRateController>(
+            builder: (context, gps, analyzer, hr, child) {
               return PM5Monitor(
                 tempo: stringTempo,
                 spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
@@ -252,6 +254,7 @@ class _SegundaPaginaState extends State<SegundaPagina> with WidgetsBindingObserv
                 distancia: gps.distanciaTotal.toStringAsFixed(0),
                 serieAtual: _serieAtual, 
                 averageParcial: gps.getAverageParcialFormatado(),
+                heartRate: hr.heartRate,
               );
             },
           ),

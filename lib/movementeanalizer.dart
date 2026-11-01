@@ -24,13 +24,13 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
   bool isRecording = false;
 
   final List<int> _intervalosMs = [];
-  static const int _tamanhoMediaIntervalos = 6; // Média das últimas 6 remadas
+  static const int _tamanhoMediaIntervalos = 5; // Média das últimas 5 remadas (mais reativo que 6)
 
   ImprovedMovementAnalyzer();
 
   // --- FILTROS DE SINAL ---
   // 1. Mata a vibração curta (ondas)
-  static const double _alphaSmooth = 0.10; 
+  static const double _alphaSmooth = 0.15; // Aumentado de 0.10 para 0.15 para reduzir lag
   double _smoothMagnitude = 9.8;
 
   // 2. Isola a gravidade (Lento)
@@ -177,7 +177,13 @@ class ImprovedMovementAnalyzer extends ChangeNotifier {
     } else {
       mediaMs = _intervalosMs.reduce((a, b) => a + b) / _intervalosMs.length;
     }
-    strokesPerMinute = 60000.0 / mediaMs;
+    double rawSpm = 60000.0 / mediaMs;
+    if (strokesPerMinute == 0.0) {
+      strokesPerMinute = rawSpm;
+    } else {
+      // EMA alpha aumentado de 0.35 para 0.45 para reagir mais rápido a mudanças de ritmo
+      strokesPerMinute = 0.45 * rawSpm + 0.55 * strokesPerMinute;
+    }
 
     if (strokeTimes.length >= 2) {
       final double totalTime =

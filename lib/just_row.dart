@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'expGPS.dart';
 import 'movementeanalizer.dart';
+import 'heart_rate_controller.dart';
 import 'custom_widgets.dart';
 
 class JustRow extends StatefulWidget { 
@@ -80,11 +81,12 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
     if (_timer != null && _timer!.isActive) return; 
     final analyzer = context.read<ImprovedMovementAnalyzer>();
     final gps = context.read<GPSController>();
+    final hr = context.read<HeartRateController>();
     
     try {
       await gps.getPermissao();
       if (!mounted) return;
-      gps.iniciarTracking(analyzer);
+      gps.iniciarTracking(analyzer, hrController: hr);
 
       if (comeco > 0) {
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -155,6 +157,7 @@ class _JustRowState extends State<JustRow> with WidgetsBindingObserver {
                   parcial: context.select<GPSController, String>((g) => g.getParcialFormatado()),
                   distancia: context.select<GPSController, String>((g) => g.distanciaTotal.toStringAsFixed(0)),
                   averageParcial: context.select<GPSController, String>((g) => g.getAverageParcialFormatado()),
+                  heartRate: context.select<HeartRateController, int>((hr) => hr.heartRate),
                 ),
               ),
             ],

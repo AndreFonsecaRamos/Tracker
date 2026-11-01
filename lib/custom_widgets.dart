@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:ui'; // Obrigatório para o FontFeature.tabularFigures()
+import 'package:provider/provider.dart';
+import 'heart_rate_controller.dart';
 
 /// 1. CARTÃO DE ESTATÍSTICA (Efeito PM5 - Grande e Legível para os ecrãs normais)
 class StatCard extends StatelessWidget {
@@ -98,6 +100,7 @@ class PM5Monitor extends StatelessWidget {
   final String distancia;
   final int serieAtual;
   final String averageParcial;
+  final int heartRate;
 
   const PM5Monitor({
     super.key,
@@ -107,6 +110,7 @@ class PM5Monitor extends StatelessWidget {
     required this.distancia,
     this.serieAtual = 1,
     this.averageParcial = "--:--",
+    this.heartRate = 0,
   });
 
   @override
@@ -118,7 +122,7 @@ class PM5Monitor extends StatelessWidget {
       child: Column(
         children: [
           // ---------------------------------------------------------
-          // LINHA SUPERIOR: Tempo e Voga
+          // LINHA SUPERIOR: Tempo, Voga e Frequência Cardíaca (HR)
           // ---------------------------------------------------------
           Expanded(
             flex: 2,
@@ -127,6 +131,8 @@ class PM5Monitor extends StatelessWidget {
                 Expanded(child: _buildPM5Block("TIME", tempo, isGiant: false)),
                 Container(width: 4, color: Colors.black), // Divisória Vertical
                 Expanded(child: _buildPM5Block("S/M", spm, isGiant: false)),
+                Container(width: 4, color: Colors.black), // Divisória Vertical
+                Expanded(child: _buildPM5Block("HR", heartRate > 0 ? heartRate.toString() : "--", isGiant: false)),
               ],
             ),
           ),
@@ -198,4 +204,82 @@ class PM5Monitor extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 4. DIÁLOGO DE CONEXÃO BLUETOOTH (Banda Cardíaca)
+void showBluetoothDialog(BuildContext context) {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Ligar Banda Cardíaca BLE'),
+      content: Consumer<HeartRateController>(
+        builder: (context, hr, child) {
+          return SizedBox(
+            width: double.maxFinite,
+            height: 300,
+            child: Column(
+              children: [
+                if (hr.isConnected)
+                  ListTile(
+                    leading: const Icon(Icons.favorite, color: Colors.red),
+                    title: Text(hr.connectedDeviceName),
+                    subtitle: Text('Ligado (${hr.heartRate} BPM)'),
+                    trailing: TextButton(
+                      onPressed: () => hr.disconnect(),
+                      child: const Text('Desligar'),
+                    ),
+                  )
+                else ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(hr.isScanning ? 'A procurar...' : 'Dispositivos encontrados:'),
+                      ElevatedButton(
+                        onPressed: hr.isScanning ? () => hr.stopScan() : () => hr.startScan(),
+                        child: Text(hr.isScanning ? 'Parar' : 'Procurar'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: hr.scanResults.isEmpty
+                        ? Center(child: Text(hr.isScanning ? 'A procurar bandas...' : 'Nenhum dispositivo encontrado.'))
+                        : ListView.builder(
+                            itemCount: hr.scanResults.length,
+                            itemBuilder: (context, index) {
+                              final result = hr.scanResults[index];
+                              final name = result.device.platformName.isNotEmpty ? result.device.platformName : result.device.remoteId.toString();
+                              return ListTile(
+                                leading: const Icon(Icons.bluetooth),
+                                title: Text(name),
+                                subtitle: Text(result.device.remoteId.toString()),
+                                trailing: ElevatedButton(
+                                  onPressed: () {
+                                    hr.connectToDevice(result.device);
+                                  },
+                                  child: const Text('Ligar'),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+                if (hr.errorMessage.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(hr.errorMessage, style: const TextStyle(color: Colors.red)),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fechar'),
+        ),
+      ],
+    ),
+  );
 }

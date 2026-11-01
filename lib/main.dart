@@ -3,6 +3,7 @@ import 'home_page.dart';
 import 'package:provider/provider.dart';
 import 'expGPS.dart';
 import 'movementeanalizer.dart';
+import 'heart_rate_controller.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 
@@ -17,6 +18,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => GPSController()),
         ChangeNotifierProvider(create: (_) => ImprovedMovementAnalyzer()),
+        ChangeNotifierProvider(create: (_) => HeartRateController()),
       ],
       child: const MyApp(),
     ),

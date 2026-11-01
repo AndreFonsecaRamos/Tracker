@@ -1,5 +1,7 @@
 # Remo App - Project Guidelines & Development Memory
 
+> **Governança do Projeto:** As cláusulas pétreas, missão central e invariantes arquiteturais e sensoriais estão formalmente definidas em [`CONSTITUTION.md`](./CONSTITUTION.md).
+
 This document serves as the persistent architectural reference, technical specification, and progress/lessons-learned log for the Remo app. It is automatically loaded into context at the start of every session to guide development and prevent repeating past errors.
 
 ---
@@ -11,30 +13,37 @@ This document serves as the persistent architectural reference, technical specif
   - Processes high-frequency accelerometer events (`sensors_plus`).
   - Applies low-pass smoothing (`_alphaSmooth = 0.10`) and gravity isolation (`_alphaGravity = 0.002`).
   - Hysteresis stroke detection with `driveThreshold = 0.30` and `thresholdRecovery = -0.12`.
+  - Stroke rate smoothing via EMA (`alpha = 0.35`) to prevent hunting/overshooting (e.g. 20 -> 23 -> 20).
 - **GPS Tracking & Pace (`GPSController` in `lib/expGPS.dart`)**:
   - Uses `geolocator` with high navigation accuracy (`LocationAccuracy.bestForNavigation`).
-  - Rolling window (`_windowDurationSeconds = 3`) combined with Double Exponential Moving Average (EMA) to smooth speed and pace (`parcialPor500m`).
+  - Rolling window (`_windowDurationSeconds = 2`) combined with Double Exponential Moving Average (EMA) (`_alpha1 = 0.55`, `_alpha2 = 0.35`) to ensure swift drop in split (`parcialPor500m`) during acceleration.
+- **Heart Rate Monitor Support (`HeartRateController` in `lib/heart_rate_controller.dart`)**:
+  - Integrates `flutter_blue_plus` for Bluetooth Low Energy (BLE) heart rate monitors (Standard HR Service `0x180D`, Measurement Characteristic `0x2A37`).
+  - Records BPM per trackpoint and exports `<HeartRateBpm>` tags in TCX files for Strava.
+  - Adds dedicated HR block in Concept 2 PM5 horizontal interface without cluttering other metrics.
 
 ---
 
 ## 2. Lessons Learned & Water Testing Guidelines
 
 ### A. Voga Stability & Anti-Double-Counting
-- **Issue**: Water chop, boat pitch, and secondary acceleration peaks during recovery or oar release previously caused double-counting of strokes.
-- **Rules / Fixes**:
-  - `_minStrokeInterval` must be at least **1250ms** (disallowing intervals shorter than 1.25s, corresponding to max ~48 SPM).
-  - Stroke rate calculation (`_calculateStrokeRates`) must use a sliding window of the last 6 intervals (`_tamanhoMediaIntervalos = 6`) with a **trimmed mean** (discarding highest and lowest outliers when `length >= 5`) to prevent erratic spikes from water noise.
+- **Issue / Historical Trials**:
+  - *Attempt 1*: Raw cadence from interval without smoothing or trimmed mean -> Resulted in double-counting from water chop and wild fluctuations.
+  - *Attempt 2*: Added `_minStrokeInterval = 1250ms`, buffer of 6 intervals, and trimmed mean outlier rejection. This fixed double-counting, but cadence still suffered from **hunting / overshooting** (e.g. holding steady at 20 SPM but reading 22/23 and dropping back down due to minor interval variance).
+- **Current Fix**:
+  - Trimmed mean + **EMA smoothing (`alpha = 0.35`)** on `strokesPerMinute` to stabilize cadence without hunting.
 
 ### B. Parcial (Pace) Responsiveness in Fast Starts & Series
-- **Issue**: A 6-second rolling window and heavy EMA smoothing caused pace (`parcialPor500m`) to lag during explosive starts or sudden rate/power increases.
-- **Rules / Fixes**:
-  - Rolling window duration (`_windowDurationSeconds`) must be kept at **3 seconds** so old slow/stopped samples flush out quickly.
-  - EMA alpha weights must remain reactive (`_alpha1 = 0.45`, `_alpha2 = 0.25`) so speed changes reflect immediately without excessive lag.
+- **Issue / Historical Trials**:
+  - *Attempt 1*: 6-second rolling window and heavy EMA (`_alpha1 = 0.45`, `_alpha2 = 0.25`) -> Resulted in severe lag during acceleration (split dropped way too slowly).
+  - *Attempt 2 (Tested)*: 3-second rolling window with same EMA -> Still slightly too slow to reflect sudden speed increases during explosive starts.
+  - *Attempt 3 (Current)*: 2-second rolling window (`_windowDurationSeconds = 2`) with more reactive EMA weights (`_alpha1 = 0.55`, `_alpha2 = 0.35`) to ensure swift drop in split (`parcialPor500m`) during acceleration.
 
 ---
 
 ## 3. Progress & Change Log
 
 - **Session (October 2026)**:
-  - Fixed voga instability and overcounting by increasing `_minStrokeInterval` to 1250ms, expanding buffer to 6 intervals, and adding trimmed mean outlier rejection.
-  - Fixed split/parcial update latency during fast starts and series by shortening the GPS rolling window to 3 seconds and tuning EMA filter responsiveness.
+  - Fixed voga instability and overcounting by increasing `_minStrokeInterval` to 1250ms, expanding buffer to 6 intervals, adding trimmed mean outlier rejection, and introducing SPM EMA smoothing to eliminate overshooting.
+  - Fixed split/parcial update latency during acceleration by shortening the GPS rolling window to 2 seconds and tuning EMA filter weights (`_alpha1 = 0.55`, `_alpha2 = 0.35`).
+  - Integrated Bluetooth Low Energy (BLE) heart rate monitor support via `flutter_blue_plus`, recorded heart rate in training sessions, added `<HeartRateBpm>` tags to TCX exports, and updated the Concept 2 PM5 monitor UI with a dedicated HR square/block.

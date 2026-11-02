@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'segunda_pagina.dart';
 import 'pagina_metros.dart';
 import 'just_row.dart';
-import 'movementeanalizer.dart';
+import 'movement_analyzer.dart';
 import 'heart_rate_controller.dart';
 import 'custom_widgets.dart';
 import 'package:provider/provider.dart';

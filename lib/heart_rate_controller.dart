@@ -15,6 +15,10 @@ class HeartRateController extends ChangeNotifier {
   StreamSubscription<List<int>>? _hrSubscription;
   StreamSubscription<BluetoothConnectionState>? _connectionStateSubscription;
 
+  bool _isIntentionalDisconnect = false;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 3;
+
   // UUIDs padrão para dispositivos de frequência cardíaca (Heart Rate Service & Measurement)
   static const String hrServiceUuid = "180d";
   static const String hrMeasurementUuid = "2a37";
@@ -68,6 +72,8 @@ class HeartRateController extends ChangeNotifier {
   Future<void> connectToDevice(BluetoothDevice device) async {
     stopScan();
     errorMessage = '';
+    _isIntentionalDisconnect = false;
+    _reconnectAttempts = 0;
     
     try {
       connectedDeviceName = device.platformName.isNotEmpty ? device.platformName : "Banda Cardíaca";
@@ -76,12 +82,17 @@ class HeartRateController extends ChangeNotifier {
       await device.connect(timeout: const Duration(seconds: 10));
       _connectedDevice = device;
       isConnected = true;
+      _reconnectAttempts = 0;
       notifyListeners();
 
       // Monitorizar estado de conexão
       _connectionStateSubscription = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
-          disconnect();
+          if (!_isIntentionalDisconnect) {
+            _handleUnexpectedDisconnect(device);
+          } else {
+            disconnect();
+          }
         }
       });
 
@@ -104,6 +115,33 @@ class HeartRateController extends ChangeNotifier {
       isConnected = false;
       _connectedDevice = null;
       notifyListeners();
+    }
+  }
+
+  void _handleUnexpectedDisconnect(BluetoothDevice device) async {
+    isConnected = false;
+    heartRate = 0;
+    notifyListeners();
+
+    if (_reconnectAttempts < _maxReconnectAttempts) {
+      _reconnectAttempts++;
+      debugPrint("BLE: Conexão perdida. A tentar reconectar (tentativa $_reconnectAttempts/$_maxReconnectAttempts)...");
+      await Future.delayed(Duration(seconds: _reconnectAttempts * 2));
+      if (!_isIntentionalDisconnect) {
+        try {
+          await device.connect(timeout: const Duration(seconds: 5));
+          _connectedDevice = device;
+          isConnected = true;
+          errorMessage = '';
+          notifyListeners();
+        } catch (e) {
+          debugPrint("BLE: Falha na reconexão: $e");
+          _handleUnexpectedDisconnect(device);
+        }
+      }
+    } else {
+      errorMessage = "Perda de conexão com a banda cardíaca.";
+      disconnect();
     }
   }
 
@@ -130,6 +168,7 @@ class HeartRateController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _isIntentionalDisconnect = true;
     try {
       await _hrSubscription?.cancel();
       await _connectionStateSubscription?.cancel();
@@ -143,6 +182,7 @@ class HeartRateController extends ChangeNotifier {
     isScanning = false;
     connectedDeviceName = '';
     heartRate = 0;
+    errorMessage = '';
     notifyListeners();
   }
 

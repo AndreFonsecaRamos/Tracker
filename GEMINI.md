@@ -9,12 +9,12 @@ This document serves as the persistent architectural reference, technical specif
 ## 1. Core Architecture & Components
 
 - **State Management**: Provider (`ChangeNotifier`, `Selector`, `Consumer2`) is used for reactive state management across screens (`JustRow`, `PaginaMetros`, `SegundaPagina`).
-- **Sensor Analysis (`ImprovedMovementAnalyzer` in `lib/movementeanalizer.dart`)**:
+- **Sensor Analysis (`ImprovedMovementAnalyzer` in `lib/movement_analyzer.dart`)**:
   - Processes high-frequency accelerometer events (`sensors_plus`).
   - Applies low-pass smoothing (`_alphaSmooth = 0.10`) and gravity isolation (`_alphaGravity = 0.002`).
   - Hysteresis stroke detection with `driveThreshold = 0.30` and `thresholdRecovery = -0.12`.
   - Stroke rate smoothing via EMA (`alpha = 0.35`) to prevent hunting/overshooting (e.g. 20 -> 23 -> 20).
-- **GPS Tracking & Pace (`GPSController` in `lib/expGPS.dart`)**:
+- **GPS Tracking & Pace (`GPSController` in `lib/exp_gps.dart`)**:
   - Uses `geolocator` with high navigation accuracy (`LocationAccuracy.bestForNavigation`).
   - Rolling window (`_windowDurationSeconds = 2`) combined with Double Exponential Moving Average (EMA) (`_alpha1 = 0.55`, `_alpha2 = 0.35`) to ensure swift drop in split (`parcialPor500m`) during acceleration.
 - **Heart Rate Monitor Support (`HeartRateController` in `lib/heart_rate_controller.dart`)**:
@@ -43,7 +43,7 @@ This document serves as the persistent architectural reference, technical specif
 
 ## 3. Progress & Change Log
 
-- **Session (October 2026)**:
-  - Fixed voga instability and overcounting by increasing `_minStrokeInterval` to 1250ms, expanding buffer to 6 intervals, adding trimmed mean outlier rejection, and introducing SPM EMA smoothing to eliminate overshooting.
-  - Fixed split/parcial update latency during acceleration by shortening the GPS rolling window to 2 seconds and tuning EMA filter weights (`_alpha1 = 0.55`, `_alpha2 = 0.35`).
-  - Integrated Bluetooth Low Energy (BLE) heart rate monitor support via `flutter_blue_plus`, recorded heart rate in training sessions, added `<HeartRateBpm>` tags to TCX exports, and updated the Concept 2 PM5 monitor UI with a dedicated HR square/block.
+- **Session (November 2026 - Refactoring & Resilience)**:
+  - Executed Phase 1: Normalized file naming conventions to `snake_case` (`movement_analyzer.dart`, `exp_gps.dart`).
+  - Executed Phase 2: Decoupled architecture by extracting TCX export logic from `GPSController` into a dedicated `TcxExportService`.
+  - Executed Phase 3 & 4: Enhanced `HeartRateController` with robust automatic BLE reconnection logic (exponential backoff up to 3 attempts) and clean error handling. Verified clean build with zero errors via `flutter analyze`.

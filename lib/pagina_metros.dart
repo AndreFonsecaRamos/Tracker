@@ -3,8 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'expGPS.dart';
-import 'movementeanalizer.dart';
+import 'exp_gps.dart';
+import 'movement_analyzer.dart';
 import 'heart_rate_controller.dart';
 import 'custom_widgets.dart';
 

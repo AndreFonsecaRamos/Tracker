@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'home_page.dart';
 import 'package:provider/provider.dart';
-import 'expGPS.dart';
-import 'movementeanalizer.dart';
+import 'exp_gps.dart';
+import 'movement_analyzer.dart';
 import 'heart_rate_controller.dart';
 import 'package:permission_handler/permission_handler.dart';
 

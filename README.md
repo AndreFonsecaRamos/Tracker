@@ -6,7 +6,7 @@ O objetivo principal é fornecer métricas em tempo real com máxima fiabilidade
 
 ---
 
-## 🚀 Principais Funcionalidades
+## Principais Funcionalidades
 
 - **Análise de Movimento e Voga (`ImprovedMovementAnalyzer`)**:
   - Processamento de alta frequência de eventos do acelerómetro (`sensors_plus`).
@@ -27,7 +27,7 @@ O objetivo principal é fornecer métricas em tempo real com máxima fiabilidade
 
 ---
 
-## 🛠️ Arquitetura & Tecnologias
+## Arquitetura & Tecnologias
 
 - **Framework**: Flutter / Dart
 - **Gestão de Estado**: Provider (`ChangeNotifier`)
@@ -36,7 +36,7 @@ O objetivo principal é fornecer métricas em tempo real com máxima fiabilidade
 
 ---
 
-## ⚙️ Instalação e Execução
+## Instalação e Execução
 
 1. Certifica-te de que tens o [Flutter SDK](https://docs.flutter.dev/get-started/install) instalado.
 2. Clona o repositório:
@@ -55,6 +55,6 @@ O objetivo principal é fornecer métricas em tempo real com máxima fiabilidade
 
 ---
 
-## 📄 Licença e Governança
+## Licença e Governança
 
 Consulte o ficheiro [`CONSTITUTION.md`](./CONSTITUTION.md) para detalhes sobre as invariantes arquiteturais e regras de desenvolvimento do projeto.

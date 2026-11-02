@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'expGPS.dart';
-import 'movementeanalizer.dart';
+import 'package:provider/provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'exp_gps.dart';
+import 'movement_analyzer.dart';
+import 'heart_rate_controller.dart';
+import 'custom_widgets.dart';
 
 class PaginaMetros extends StatefulWidget {
   final double metros;
@@ -17,94 +22,214 @@ class PaginaMetros extends StatefulWidget {
   State<PaginaMetros> createState() => _PaginaMetrosState();
 }
 
-class _PaginaMetrosState extends State<PaginaMetros> {
+class _PaginaMetrosState extends State<PaginaMetros> with WidgetsBindingObserver {
+  int comeco = 3;
   Timer? _timer;
-  double _metrosRestantes = 0;
-  bool _ativo = false;
+  
+  bool _isDescanso = false;
+  Duration _tempoRestanteDescanso = Duration.zero;
 
-  final ImprovedMovementAnalyzer _movementAnalyzer = ImprovedMovementAnalyzer();
+  DateTime? _horaQueComecou;
+  Duration _tempoAcumuladoAntesDaPausa = Duration.zero;
+  Duration _tempoAtual = Duration.zero;
 
-  // Variáveis GPS
-  final gps = GPSController();
-  DateTime? _ultimosalto;
-  double parcialINmilisseconds = 0;
-
-  // Cálculos do parcial
-  void parcial(double distanciaUltima) {
-    DateTime agora = DateTime.now();
-    if (_ultimosalto != null && agora.difference(_ultimosalto!).inMilliseconds > 200) {
-      int diferencaTempo = agora.difference(_ultimosalto!).inMilliseconds;
-
-      if (distanciaUltima > 0.5) {
-        parcialINmilisseconds = (500 * diferencaTempo) / distanciaUltima;
-        
-        if (parcialINmilisseconds < 80000 || parcialINmilisseconds > 600000) {
-          parcialINmilisseconds = 0;
-        }
-      }
-    }
-    _ultimosalto = agora;
-  }
-
-  String _formatParcial(double parcialMs) {
-    if (parcialMs <= 0 || parcialMs > 600000) return "--:--";
-
-    int totalSeconds = (parcialMs / 1000).round();
-    int minutes = totalSeconds ~/ 60;
-    int seconds = totalSeconds % 60;
-
-    return "${minutes.toString().padLeft(1, '0')}:${seconds.toString().padLeft(2, '0')}";
-  }
+  int _serieAtual = 1;
 
   @override
   void initState() {
     super.initState();
-    _metrosRestantes = widget.metros;
+    WidgetsBinding.instance.addObserver(this); 
+    WakelockPlus.enable(); 
 
-    _movementAnalyzer.startAnalysis(onStrokeDetected: () {
-      setState(() {});
-    });
-
-    gps.addListener(() {
-      setState(() {
-        _metrosRestantes = _metrosRestantes - gps.distanciaUltimaRemada;
-        
-        if (gps.distanciaUltimaRemada > 0.5) {
-          parcial(gps.distanciaUltimaRemada);
-        }
-
-        if (_metrosRestantes <= 0) {
-          _metrosRestantes = 0;
-          gps.pararTracking();
-          _stop();
-          _showCompletionDialog();
-        }
-      });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<GPSController>().resetDados();
+        context.read<ImprovedMovementAnalyzer>().reset();
+      }
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      if (_horaQueComecou != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Treino em pausa (App em segundo plano)')),
+        );
+      }
+    }
+  }
+
+  void _resetCounters() {
+    _stopTimer();
+    context.read<GPSController>().resetDados();
+    context.read<ImprovedMovementAnalyzer>().reset();
+
+    setState(() {
+      _isDescanso = false;
+      _horaQueComecou = null;
+      _tempoAcumuladoAntesDaPausa = Duration.zero;
+      _tempoAtual = Duration.zero;
+      comeco = 3;
+      _serieAtual = 1;
+    });
+  }
+
+  // --- GATILHO AUTOMÁTICO: DISTÂNCIA ---
+  void _startTimer() {
+    if (_timer != null && _timer!.isActive) return;
+
+    _horaQueComecou = DateTime.now();
+    context.read<ImprovedMovementAnalyzer>().startRecording();
+
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      
+      final currentGps = context.read<GPSController>();
+      final agora = DateTime.now();
+
+      if (!_isDescanso) {
+        // TRABALHO: Contar o tempo normalmente
+        setState(() {
+          _tempoAtual = _tempoAcumuladoAntesDaPausa + agora.difference(_horaQueComecou!);
+        });
+
+        // GATILHO 1: Atingiu os metros alvo?
+        if (currentGps.distanciaTotal >= widget.metros) {
+           setState(() {
+             _isDescanso = true; 
+             _tempoRestanteDescanso = widget.intervalo; 
+             _horaQueComecou = agora; // Reinicia o relógio interno para o descanso
+             _tempoAcumuladoAntesDaPausa = _tempoAtual; // Guarda o tempo decorrido
+           });
+        }
+      } else {
+        // DESCANSO: Contagem decrescente
+        final tempoPassado = agora.difference(_horaQueComecou!);
+        final tempoAmostrar = _tempoRestanteDescanso - tempoPassado;
+
+        if (tempoAmostrar.inSeconds <= 0) {
+          // GATILHO 2: O descanso terminou
+          setState(() {
+            _isDescanso = false; 
+            _horaQueComecou = agora;
+            _serieAtual++; // ← ADICIONA AQUI
+          });
+          currentGps.resetDados(); 
+        } else {
+          setState(() {
+            _tempoAtual = tempoAmostrar;
+          });
+        }
+      }
+    });
+  }
+
+  void _startWork() async {
+    if (_timer != null && _timer!.isActive) return;
+
+    final gps = context.read<GPSController>();
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
+    final hr = context.read<HeartRateController>();
+
+    try {
+      await gps.getPermissao();
+      if (!mounted) return;
+      gps.iniciarTracking(analyzer, hrController: hr);
+
+      if (comeco > 0) {
+        _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          if (!mounted) {
+            timer.cancel();
+            return;
+          }
+
+          if (comeco > 1) {
+            setState(() { comeco--; });
+          } else {
+            timer.cancel();
+            setState(() { comeco = 0; });
+            gps.resetDados();
+            _startTimer();
+          }
+        });
+      } else {
+        _startTimer();
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+    }
+  }
+
+  void _stopTimer() {
+    // AVISAR O ECRÃ PARA ATUALIZAR (Mostrar o botão)
+    setState(() { 
+      if (_horaQueComecou != null) {
+        _tempoAcumuladoAntesDaPausa += DateTime.now().difference(_horaQueComecou!);
+        _horaQueComecou = null; 
+      }
+      _timer?.cancel();
+      _timer = null;
+    });
+    
+    context.read<ImprovedMovementAnalyzer>().stopRecording();
+    context.read<GPSController>().pararTracking();
+  }
+
+  @override
+  void dispose() {
+    _stopTimer();
+    WidgetsBinding.instance.removeObserver(this); 
+    WakelockPlus.disable(); 
+    super.dispose();
+  }
+
+  // --- JANELA DE FIM E EXPORTAÇÃO ---
   void _showCompletionDialog() {
+    final analyzer = context.read<ImprovedMovementAnalyzer>();
+
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('🏆 Distância Completada!'),
+          title: const Text('🏆 Treino Concluído!'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Distância: ${widget.metros.toStringAsFixed(0)}m'),
-              Text('Remadas: ${_movementAnalyzer.totalStrokes}'),
-              Text('Taxa média: ${_movementAnalyzer.averageStrokeRate.toStringAsFixed(1)} spm'),
-              Text('Tempo: ${_movementAnalyzer.getSessionDurationString()}'),
-              if (parcialINmilisseconds > 0)
-                Text('Melhor parcial: ${_formatParcial(parcialINmilisseconds)}'),
+              Text('Distância Alvo: ${widget.metros.toStringAsFixed(0)}m'),
+              Text('Remadas: ${analyzer.totalStrokes}'),
+              Text('Voga média: ${analyzer.averageStrokeRate.toStringAsFixed(1)} spm'),
             ],
           ),
           actions: [
             TextButton(
+              onPressed: () async {
+                final nav = Navigator.of(context);
+                final gps = context.read<GPSController>();
+                nav.pop();
+                
+                await gps.exportarTreinoTCX();
+                
+                // Se houve erro, mostra ao utilizador
+                if (gps.erro.isNotEmpty && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(gps.erro),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Exportar (Strava)', style: TextStyle(color: Colors.orange)),
+            ),
+            TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _reset();
+                _resetCounters();
               },
               child: const Text('Novo Treino'),
             ),
@@ -114,381 +239,178 @@ class _PaginaMetrosState extends State<PaginaMetros> {
     );
   }
 
-  void _start() async {
-    if (_ativo) return;
-
-    try {
-      await gps.getPermissao();
-      gps.iniciarTracking();
-
-      setState(() {
-        _ativo = true;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro: $e')),
-      );
-    }
-  }
-
-  void _stop() {
-    _timer?.cancel();
-    setState(() {
-      _ativo = false;
-    });
-  }
-
-  void _reset() {
-    _stop();
-    gps.pararTracking();
-    setState(() {
-      _metrosRestantes = widget.metros;
-      parcialINmilisseconds = 0;
-      _ultimosalto = null;
-      _movementAnalyzer.reset();
-    });
-  }
-
-  @override
-  void dispose() {
-    _stop();
-    _movementAnalyzer.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
+    final minutos = _tempoAtual.inMinutes;
+    final segundos = _tempoAtual.inSeconds % 60;
+    final stringTempo = comeco > 0 
+        ? comeco.toString() 
+        : "${minutos.toString().padLeft(2, '0')}:${segundos.toString().padLeft(2, '0')}";
+
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
+    if (isLandscape) {
+      return Scaffold(
+        body: SafeArea(
+          child: Consumer3<GPSController, ImprovedMovementAnalyzer, HeartRateController>(
+            builder: (context, gps, analyzer, hr, child) {
+              double metrosRestantes = math.max(0, widget.metros - gps.distanciaTotal);
+              return PM5Monitor(
+                tempo: stringTempo,
+                spm: analyzer.strokesPerMinute > 0 ? analyzer.strokesPerMinute.toStringAsFixed(0) : "0",
+                parcial: gps.getParcialFormatado(),
+                distancia: metrosRestantes.toStringAsFixed(0),
+                serieAtual: _serieAtual, 
+                averageParcial: gps.getAverageParcialFormatado(),
+                heartRate: hr.heartRate,
+              );
+            },
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: const Text("Treino por Distância"),
       ),
-      body: SingleChildScrollView(
+      body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
+        child: ListView(
           children: [
-            // LAYOUT PRINCIPAL COM 3 SEÇÕES
-            Column(
-              children: [
-                // Primeira linha: Tempo decorrido | VOGA
-                SizedBox(
-                  height: 60,
-                  child: Row(
-                    children: [
-                      // Tempo decorrido
-                      Expanded(
-                        child: Container(
-                          height: 60,
-                          decoration: BoxDecoration(
-                            color: Colors.blue.shade50,
-                            border: Border.all(color: Colors.grey.shade400, width: 1),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                "Tempo decorrido",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.grey.shade700,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                _movementAnalyzer.getSessionDurationString(),
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      // VOGA
-                      Expanded(
-                        child: Container(
-                          height: 60,
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade50,
-                            border: Border.all(color: Colors.grey.shade400, width: 1),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                "VOGA",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.grey.shade700,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                "${_movementAnalyzer.strokesPerMinute.toStringAsFixed(1)} spm",
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // Segunda linha: Metros restantes
-                Container(
-                  height: 60,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    border: Border.all(color: Colors.grey.shade400, width: 1),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Metros restantes",
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        "${_metrosRestantes.toStringAsFixed(0)} m",
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // Terceira linha: Parcial
-                Container(
-                  height: 60,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.purple.shade50,
-                    border: Border.all(color: Colors.grey.shade400, width: 1),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Parcial",
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        "${_formatParcial(parcialINmilisseconds)} /500m",
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.purple,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 20),
-
-            // Informação adicional compacta
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Column(
-                  children: [
-                    Text(
-                      "${gps.distanciaTotal.toStringAsFixed(0)} m",
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const Text("Percorridos", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
-                ),
-                Column(
-                  children: [
-                    Text(
-                      "${_movementAnalyzer.totalStrokes}",
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const Text("Remadas", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
-                ),
-                Column(
-                  children: [
-                    Text(
-                      "${_movementAnalyzer.averageStrokeRate.toStringAsFixed(1)}",
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const Text("Taxa Média", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-
-            // Botões de controle
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: ElevatedButton.icon(
-                      onPressed: _ativo ? null : _start,
-                      icon: const Icon(Icons.play_arrow, size: 20),
-                      label: const Text("Start"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: ElevatedButton.icon(
-                      onPressed: _ativo ? _stop : null,
-                      icon: const Icon(Icons.pause, size: 20),
-                      label: const Text("Pause"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: ElevatedButton.icon(
-                      onPressed: _reset,
-                      icon: const Icon(Icons.refresh, size: 20),
-                      label: const Text("Reset"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-
-            // Status atual
+            const SizedBox(height: 10),
+            // CABEÇALHO DO ESTADO (DESCANSO/TREINO)
             Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: _isDescanso ? Colors.orange.shade100 : Colors.green.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _isDescanso ? "DESCANSO" : "TREINO",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 20, 
+                  fontWeight: FontWeight.bold,
+                  color: _isDescanso ? Colors.orange.shade800 : Colors.green.shade800,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              stringTempo,
+              style: TextStyle(
+                fontSize: 64,
+                fontWeight: FontWeight.bold,
+                color: comeco > 0 ? Colors.red : (_isDescanso ? Colors.orange : Colors.green),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+
+            if (!_isDescanso) ...[
+              const Text(
+                "METROS RESTANTES",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey),
+              ),
+              Selector<GPSController, double>(
+                selector: (_, g) => g.distanciaTotal,
+                builder: (_, distanciaTotal, __) {
+                  double metrosRestantes = math.max(0, widget.metros - distanciaTotal);
+                  return Text(
+                    metrosRestantes.toStringAsFixed(0),
+                    style: const TextStyle(
+                      fontSize: 72, 
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange,
+                    ),
+                    textAlign: TextAlign.center,
+                  );
+                },
+              ),
+            ],
+            const SizedBox(height: 20),
+            ControlButtons(
+              onStart: _startWork,
+              onStop: _stopTimer,
+              onReset: _resetCounters,
+            ),
+            // --- BOTÃO DE FINALIZAÇÃO MANUAL ---
+            if (comeco == 0 && _timer == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilledButton.icon(
+                  onPressed: _showCompletionDialog,
+                  icon: const Icon(Icons.save),
+                  label: const Text("FINALIZAR E EXPORTAR"),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 20),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2, 
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.2, 
+              children: [
+                Selector<GPSController, String>(
+                  selector: (_, g) => g.getParcialFormatado(),
+                  builder: (_, value, __) => StatCard(
+                    title: "Parcial 500m",
+                    value: value,
+                    baseColor: Colors.blue,
+                  ),
+                ),
+                Selector<ImprovedMovementAnalyzer, double>(
+                  selector: (_, a) => a.strokesPerMinute,
+                  builder: (_, value, __) => StatCard(
+                    title: "Voga Atual",
+                    value: value.toStringAsFixed(1),
+                    baseColor: Colors.green,
+                  ),
+                ),
+                StatCard(
+                  title: "Tempo",
+                  value: stringTempo, 
+                  baseColor: Colors.purple,
+                ),
+                Selector<ImprovedMovementAnalyzer, int>(
+                  selector: (_, a) => a.totalStrokes,
+                  builder: (_, value, __) => StatCard(
+                    title: "Remadas",
+                    value: "$value",
+                    baseColor: Colors.teal,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey.shade100,
+                color: Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(
-                children: [
-                  Icon(
-                    _getStatusIcon(),
-                    color: _getStatusColor(),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _movementAnalyzer.getMovementStatus(),
-                      style: TextStyle(
-                        fontSize: 16, 
-                        fontWeight: FontWeight.w500,
-                        color: _getStatusColor(),
-                      ),
-                    ),
-                  ),
-                ],
+              child: Selector<ImprovedMovementAnalyzer, String>(
+                selector: (_, a) => a.getMovementStatus(),
+                builder: (_, status, __) => Text(
+                  status,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
-
-            const SizedBox(height: 20),
-
-            // Dados técnicos (expansível e compacto)
-            Card(
-              child: ExpansionTile(
-                title: const Text("Dados Técnicos", style: TextStyle(fontSize: 16)),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text("Balanço: ${_movementAnalyzer.magnitude.toStringAsFixed(1)} m/s²"),
-                            Text("GPS: ${gps.getQualidadeGPS().split(' ')[0]}"),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        if (gps.velocidadeAtual > 0)
-                          Text("Velocidade: ${gps.getVelocidadeKmh().toStringAsFixed(1)} km/h"),
-                        const SizedBox(height: 8),
-                        Text(
-                          "X: ${_movementAnalyzer.x.toStringAsFixed(1)} | "
-                          "Y: ${_movementAnalyzer.y.toStringAsFixed(1)} | "
-                          "Z: ${_movementAnalyzer.z.toStringAsFixed(1)}",
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        if (_movementAnalyzer.errorMessage.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            _movementAnalyzer.errorMessage,
-                            style: const TextStyle(color: Colors.red, fontSize: 12),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
-            // Espaço extra para scroll
-            const SizedBox(height: 20),
           ],
         ),
       ),
     );
-  }
-
-  IconData _getStatusIcon() {
-    final status = _movementAnalyzer.getMovementStatus();
-    if (status.contains("Remando")) return Icons.rowing;
-    if (status.contains("movimento")) return Icons.directions_boat;
-    if (status.contains("Pronto")) return Icons.check_circle;
-    return Icons.error;
-  }
-
-  Color _getStatusColor() {
-    final status = _movementAnalyzer.getMovementStatus();
-    if (status.contains("Remando")) return Colors.green;
-    if (status.contains("movimento")) return Colors.orange;
-    if (status.contains("Pronto")) return Colors.blue;
-    return Colors.red;
   }
 }

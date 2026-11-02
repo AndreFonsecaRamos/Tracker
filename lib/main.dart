@@ -1,9 +1,28 @@
 import 'package:flutter/material.dart';
 import 'home_page.dart';
+import 'package:provider/provider.dart';
+import 'exp_gps.dart';
+import 'movement_analyzer.dart';
+import 'heart_rate_controller.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized(); 
+
+  await Permission.notification.request();
+
+  runApp(
+    // O teu MultiProvider continua igual...
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => GPSController()),
+        ChangeNotifierProvider(create: (_) => ImprovedMovementAnalyzer()),
+        ChangeNotifierProvider(create: (_) => HeartRateController()),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {

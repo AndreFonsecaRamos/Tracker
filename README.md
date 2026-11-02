@@ -1,17 +1,60 @@
-# remo
+# Remo
 
-Projeto de remo em flutter.
-O objetivo desta aplicação é criar um tracker para remo utilizavel atravez do telemovel.
+Aplicação móvel desenvolvida em **Flutter** para servir como um **computador de bordo de alta precisão para remadores em ambiente aquático** (single scull, double scull, dois sem, etc.).
 
-## Getting Started
+O objetivo principal é fornecer métricas em tempo real com máxima fiabilidade e legibilidade sob luz solar direta, sem necessidade de ligação constante à internet (totalmente offline).
 
-This project is a starting point for a Flutter application.
+---
 
-A few resources to get you started if this is your first Flutter project:
+## 🚀 Principais Funcionalidades
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- **Análise de Movimento e Voga (`ImprovedMovementAnalyzer`)**:
+  - Processamento de alta frequência de eventos do acelerómetro (`sensors_plus`).
+  - Filtragem de ruído aquático, isolamento de gravidade e deteção de remadas com histerese física.
+  - Suavização de cadência (SPM - Strokes Per Minute) via EMA (*Exponential Moving Average*) para evitar oscilações erráticas e dupla contagem.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- **Rastreio GPS & Ritmo / Parcial (`GPSController`)**:
+  - Utilização de `geolocator` com alta precisão (`LocationAccuracy.bestForNavigation`).
+  - Janela deslizante otimizada e suavização em Dupla EMA para reatividade instantânea do parcial por 500m (`parcialPor500m`) durante arrancadas e mudanças de ritmo.
+
+- **Monitor de Frequência Cardíaca (HRM)**:
+  - Integração via Bluetooth Low Energy (`flutter_blue_plus`) com bandas cardíacas padrão (Serviço HR `0x180D`).
+  - Registo de BPM por trackpoint e suporte de exportação para ficheiros **TCX** (compatível com Strava e Garmin).
+
+- **Interface Otimizada para Água**:
+  - Alto contraste e tipografia de escala grande para perfeita visibilidade sob luz solar direta no barco.
+  - Prevenção de suspensão de ecrã (`Wakelock`).
+
+---
+
+## 🛠️ Arquitetura & Tecnologias
+
+- **Framework**: Flutter / Dart
+- **Gestão de Estado**: Provider (`ChangeNotifier`)
+- **Sensores**: `sensors_plus`, `geolocator`, `flutter_blue_plus`
+- **Governança**: Arquitetura guiada pela [`CONSTITUTION.md`](./CONSTITUTION.md) e diretrizes técnicas em [`GEMINI.md`](./GEMINI.md).
+
+---
+
+## ⚙️ Instalação e Execução
+
+1. Certifica-te de que tens o [Flutter SDK](https://docs.flutter.dev/get-started/install) instalado.
+2. Clona o repositório:
+   ```bash
+   git clone https://github.com/AndreFonsecaRamos/Tracker.git
+   cd Tracker
+   ```
+3. Instala as dependências:
+   ```bash
+   flutter pub get
+   ```
+4. Executa a aplicação num dispositivo físico (recomendado para testes de GPS e acelerómetro) ou em emulador:
+   ```bash
+   flutter run
+   ```
+
+---
+
+## 📄 Licença e Governança
+
+Consulte o ficheiro [`CONSTITUTION.md`](./CONSTITUTION.md) para detalhes sobre as invariantes arquiteturais e regras de desenvolvimento do projeto.
